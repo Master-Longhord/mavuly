@@ -14,11 +14,11 @@
 - [x] Login endpoint.
 - [x] JWT Strategy & Token Generation (Access & Refresh tokens).
 
-## 3. Identity Module (`IdentityModule`) ⏳ *[Up Next]*
-- [ ] Get Current User Profile endpoint (`/api/v1/identity/me`).
-- [ ] Wallet & Escrow Balance retrieval.
+## 3. Identity Module (`IdentityModule`) ✅
+- [x] Get Current User Profile endpoint (`/api/v1/identity/me`).
+- [x] Update Profile endpoint (`PATCH /api/v1/identity/me`).
 
-## 4. Campaigns Module (`CampaignModule`) ❌
+## 4. Campaigns Module (`CampaignModule`) ⏳ *[Up Next]*
 - [ ] Developer Campaign creation (Escrow Allocation).
 - [ ] Public active testing catalog (`/api/v1/campaigns/active`).
 
@@ -29,8 +29,9 @@
 - [ ] Quality Review & Escrow Release (Accept/Reject logic).
 
 ## 6. Ledger Module (`LedgerModule`) ❌
+- [ ] Flutterwave KYC Bank Account Verification.
 - [ ] Escrow transaction logging.
-- [ ] User transaction logging (Rewards, Platform Profit).
+- [ ] User transaction logging (Rewards, Platform Profit, Withdrawals).
 
 ## 7. Arcade Module (`ArcadeModule`) ❌
 - [ ] PvP matchmaking (60s Arcade).

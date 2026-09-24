@@ -72,6 +72,18 @@ model User {
   passwordHash       String           @map("password_hash")
   role               Role             @default(USER)
   accountType        AccountType      @default(TESTER) @map("account_type")
+  name               String?          // Used for Tester Name
+  studioName         String?          @map("studio_name") // Used for Developer Studio Name
+  phone              String?
+  country            String?
+  dob                DateTime?        // Date of Birth
+  notifications      Boolean          @default(true)
+  legalName          String?          @map("legal_name")
+  bankName           String?          @map("bank_name")
+  accountNumber      String?          @map("account_number")
+  accountName        String?          @map("account_name")
+  withdrawalVerified Boolean          @default(false) @map("withdrawal_verified")
+
   developerVerified  Boolean          @default(false) @map("developer_verified")
   coinBalance        Int              @default(0) @map("coin_balance")
   escrowBalance      Decimal          @default(0.00) @db.Decimal(12, 2) @map("escrow_balance")
