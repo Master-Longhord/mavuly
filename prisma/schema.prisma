@@ -66,6 +66,21 @@ enum TransactionStatus {
   FAILED
 }
 
+enum GameType {
+  WORD_CLASH
+  DICE_DASH
+  MATH_DUEL
+  TRIVIA_RUSH
+  TILE_MATCH
+}
+
+enum MatchStatus {
+  WAITING_OPPONENT
+  PLAYING
+  SETTLED
+  EXPIRED_REFUNDED
+}
+
 model User {
   id                 String           @id @default(uuid())
   email              String           @unique
@@ -88,6 +103,9 @@ model User {
   coinBalance        Int              @default(0) @map("coin_balance")
   escrowBalance      Decimal          @default(0.00) @db.Decimal(12, 2) @map("escrow_balance")
   isActive           Boolean          @default(true) @map("is_active")
+  
+  tamperAttemptCount Int              @default(0) @map("tamper_attempt_count")
+  
   createdAt          DateTime         @default(now()) @map("created_at")
   updatedAt          DateTime         @updatedAt @map("updated_at")
 
@@ -96,6 +114,16 @@ model User {
   submissions        TaskSubmission[] @relation("TesterSubmissions")
   escrowTransactions EscrowTransaction[]
   transactions       Transaction[]
+  
+  matchesAsPlayer1   ArcadeMatch[]    @relation("MatchPlayer1")
+  matchesAsPlayer2   ArcadeMatch[]    @relation("MatchPlayer2")
+  matchesWon         ArcadeMatch[]    @relation("MatchWinner")
+
+  streakDays         Int              @default(0) @map("streak_days")
+  lastStreakDate     String?          @map("last_streak_date") // Stored as "YYYY-MM-DD"
+  matchesPlayedToday Int              @default(0) @map("matches_played_today")
+  mathMatchesToday   Int              @default(0) @map("math_matches_today")
+  tileMatchesToday   Int              @default(0) @map("tile_matches_today")
 
   @@map("users")
 }
@@ -211,4 +239,37 @@ model Transaction {
   submission      TaskSubmission?   @relation(fields: [submissionId], references: [id])
 
   @@map("transactions")
+}
+
+model ArcadeMatch {
+  id                 String      @id @default(uuid())
+  gameType           GameType    @map("game_type")
+  stakeAmount        Int         @default(50) @map("stake_amount") // Cost to play
+  prizeAmount        Int         @default(85) @map("prize_amount") // Winner takes
+  boardSeed          String      @map("board_seed") // Anti-cheat seed
+  
+  player1Id          String      @map("player1_id")
+  player2Id          String?     @map("player2_id")
+  
+  player1Score       Int?        @map("player1_score")
+  player2Score       Int?        @map("player2_score")
+  
+  player1CompletedAt DateTime?   @map("player1_completed_at")
+  player2CompletedAt DateTime?   @map("player2_completed_at")
+  
+  winnerId           String?     @map("winner_id")
+  status             MatchStatus @default(WAITING_OPPONENT)
+  
+  isBotOpponent      Boolean     @default(false) @map("is_bot_opponent")
+  botName            String?     @map("bot_name")
+  
+  settledAt          DateTime?   @map("settled_at")
+  createdAt          DateTime    @default(now()) @map("created_at")
+  updatedAt          DateTime    @updatedAt @map("updated_at")
+
+  player1            User        @relation("MatchPlayer1", fields: [player1Id], references: [id])
+  player2            User?       @relation("MatchPlayer2", fields: [player2Id], references: [id])
+  winner             User?       @relation("MatchWinner", fields: [winnerId], references: [id])
+
+  @@map("arcade_matches")
 }
