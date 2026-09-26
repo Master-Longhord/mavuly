@@ -136,6 +136,8 @@ model User {
   matchesPlayedToday Int              @default(0) @map("matches_played_today")
   mathMatchesToday   Int              @default(0) @map("math_matches_today")
   tileMatchesToday   Int              @default(0) @map("tile_matches_today")
+  questClaimsDate    String?          @map("quest_claims_date") // Stored as "YYYY-MM-DD"
+  questClaims        String[]         @default([]) @map("quest_claims")
 
   @@map("users")
 }

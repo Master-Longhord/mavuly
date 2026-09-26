@@ -18,7 +18,6 @@ export class LedgerService {
     ) { }
 
     async requestWithdrawal(userId: string, dto: WithdrawDto) {
-        // 1. Fetch user and their verified bank account
         const user = await this.prisma.user.findUnique({
             where: { id: userId },
             include: { bankAccount: true },
@@ -32,12 +31,9 @@ export class LedgerService {
             throw new BadRequestException('Insufficient KudiCoins.');
         }
 
-        // 2. Do the Math (Coins -> USD -> NGN)
         const usdAmount = dto.amount * this.KUDICOIN_TO_USD_RATE;
         const ngnAmount = Math.floor(usdAmount * this.USD_TO_NGN_RATE);
         const reference = `WD-${Date.now()}-${uuidv4().substring(0, 8)}`;
-
-        // 3. STEP 1: Lock the funds in the database (Create PENDING transaction)
         const pendingTx = await this.prisma.$transaction(async (tx) => {
             await tx.user.update({
                 where: { id: userId },
@@ -56,7 +52,6 @@ export class LedgerService {
             });
         });
 
-        // 4. STEP 2: Call Flutterwave Transfer API
         try {
             const secretKey = this.configService.get<string>('FLUTTERWAVE_SECRET_KEY');
 
@@ -81,8 +76,6 @@ export class LedgerService {
             if (flwResponse.data.status !== 'success') {
                 throw new Error('Flutterwave returned non-success status');
             }
-
-            // 5. STEP 3 (SUCCESS): Mark transaction as COMPLETED
             await this.prisma.transaction.update({
                 where: { id: pendingTx.id },
                 data: { status: TransactionStatus.COMPLETED },
@@ -96,11 +89,10 @@ export class LedgerService {
             };
 
         } catch (error: any) {
-            // 6. STEP 3 (FAIL): Refund the user and mark FAILED
             await this.prisma.$transaction([
                 this.prisma.user.update({
                     where: { id: userId },
-                    data: { coinBalance: { increment: dto.amount } }, // Refund!
+                    data: { coinBalance: { increment: dto.amount } },
                 }),
                 this.prisma.transaction.update({
                     where: { id: pendingTx.id },
@@ -128,17 +120,13 @@ export class LedgerService {
                 createdAt: true,
             },
         });
-
-        // Map the database records to exactly what the frontend UI expects
         return transactions.map((tx) => {
-            // Determine if the transaction added or removed coins
             const isPositive = ['REWARD', 'PVP_WIN'].includes(tx.type);
 
             return {
                 id: tx.id,
                 date: tx.createdAt,
                 description: tx.description || tx.type,
-                // Send a positive or negative number based on the transaction type
                 amount: isPositive ? Number(tx.amount) : -Number(tx.amount),
                 status: tx.status,
                 type: tx.type,
