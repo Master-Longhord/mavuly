@@ -35,10 +35,12 @@
 - [x] Zero-Cost KYC (Bank Account Name vs Identity matching).
 - [x] Sybil Defense (Unique NUBAN constraints).
 
-## 7. Ledger Module (`LedgerModule`) ⏳ *[Up Next]*
-- [ ] Coin to USD/NGN conversion logic.
-- [ ] Flutterwave Payout/Transfer integration.
-- [ ] Withdrawal request endpoint.
+## 7. Ledger Module (`LedgerModule`) ✅
+- [x] Coin to USD/NGN conversion logic.
+- [x] Enterprise 2-Step Payout logic (Lock -> Execute -> Settle/Refund).
+- [x] Flutterwave Payout/Transfer integration.
+- [x] Withdrawal request endpoint (`/api/v1/ledger/withdraw`).
+- [x] Transaction History endpoint (`/api/v1/ledger/transactions`).
 
 ## 8. Developer Modules (Campaigns & Submissions) ❌ *[Post-MVP Phase 2]*
 - [ ] Escrow Allocation & Developer Campaign creation.

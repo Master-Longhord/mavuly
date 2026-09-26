@@ -9,6 +9,7 @@ import { RolesGuard } from './common/guards/roles.guard';
 import { ArcadeModule } from './modules/arcade/arcade.module';
 import { LeaderboardModule } from './modules/leaderboard/leaderboard.module';
 import { VerificationModule } from './modules/verification/verification.module';
+import { LedgerModule } from './modules/ledger/ledger.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { VerificationModule } from './modules/verification/verification.module';
     ArcadeModule,
     LeaderboardModule,
     VerificationModule,
+    LedgerModule,
   ],
   providers: [
     {
