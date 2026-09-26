@@ -109,6 +109,8 @@ model User {
   createdAt          DateTime         @default(now()) @map("created_at")
   updatedAt          DateTime         @updatedAt @map("updated_at")
 
+  lastDailyClaim     DateTime?        @map("last_daily_claim")
+
   refreshTokens      RefreshToken[]
   campaigns          Campaign[]       @relation("DeveloperCampaigns")
   submissions        TaskSubmission[] @relation("TesterSubmissions")

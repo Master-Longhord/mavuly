@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 
@@ -53,6 +53,51 @@ export class IdentityService {
                 dob: true,
                 notifications: true,
             },
+        });
+    }
+
+    async claimDailyReward(userId: string) {
+        const user = await this.prisma.user.findUnique({ where: { id: userId } });
+        if (!user) throw new NotFoundException('User not found');
+
+        const today = new Date();
+        today.setUTCHours(0, 0, 0, 0);
+
+        if (user.lastDailyClaim) {
+            const lastClaimDate = new Date(user.lastDailyClaim);
+            lastClaimDate.setUTCHours(0, 0, 0, 0);
+
+            if (lastClaimDate.getTime() === today.getTime()) {
+                throw new ForbiddenException('You have already claimed your daily reward today. Come back tomorrow!');
+            }
+        }
+
+        return this.prisma.$transaction(async (tx) => {
+            const updatedUser = await tx.user.update({
+                where: { id: userId },
+                data: {
+                    coinBalance: { increment: 20 },
+                    lastDailyClaim: new Date(),
+                },
+                select: { coinBalance: true, lastDailyClaim: true },
+            });
+
+            await tx.transaction.create({
+                data: {
+                    userId,
+                    amount: 20,
+                    type: 'REWARD',
+                    status: 'COMPLETED',
+                    reference: `DAILY-${Date.now()}-${userId}`,
+                    description: 'Daily login bonus',
+                },
+            });
+
+            return {
+                message: 'Daily reward claimed successfully!',
+                coinsAwarded: 20,
+                newBalance: updatedUser.coinBalance,
+            };
         });
     }
 }
