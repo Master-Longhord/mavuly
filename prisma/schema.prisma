@@ -81,6 +81,13 @@ enum MatchStatus {
   EXPIRED_REFUNDED
 }
 
+enum KycStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  FLAGGED
+}
+
 model User {
   id                 String           @id @default(uuid())
   email              String           @unique
@@ -98,6 +105,9 @@ model User {
   accountNumber      String?          @map("account_number")
   accountName        String?          @map("account_name")
   withdrawalVerified Boolean          @default(false) @map("withdrawal_verified")
+
+  kycStatus          KycStatus        @default(UNVERIFIED) @map("kyc_status")
+  bankAccount        BankAccount?
 
   developerVerified  Boolean          @default(false) @map("developer_verified")
   coinBalance        Int              @default(0) @map("coin_balance")
@@ -274,4 +284,22 @@ model ArcadeMatch {
   winner             User?       @relation("MatchWinner", fields: [winnerId], references: [id])
 
   @@map("arcade_matches")
+}
+
+model BankAccount {
+  id            String    @id @default(uuid())
+  userId        String    @unique @map("user_id")
+  bankCode      String    @map("bank_code")
+  bankName      String    @map("bank_name")
+  accountNumber String    @map("account_number")
+  accountName   String    @map("account_name")
+  isVerified    Boolean   @default(false) @map("is_verified")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Critical: Prevents multi-account reward farming
+  @@unique([bankCode, accountNumber], name: "unique_bank_destination")
+  @@map("bank_accounts")
 }

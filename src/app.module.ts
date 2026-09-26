@@ -8,6 +8,7 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { ArcadeModule } from './modules/arcade/arcade.module';
 import { LeaderboardModule } from './modules/leaderboard/leaderboard.module';
+import { VerificationModule } from './modules/verification/verification.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { LeaderboardModule } from './modules/leaderboard/leaderboard.module';
     IdentityModule,
     ArcadeModule,
     LeaderboardModule,
+    VerificationModule,
   ],
   providers: [
     {
