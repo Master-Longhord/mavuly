@@ -29,6 +29,8 @@ export class AuthService {
                 email: dto.email,
                 passwordHash: hashedPassword,
                 accountType: dto.accountType,
+                name: dto.name,
+                phone: dto.phone
             },
         });
 
