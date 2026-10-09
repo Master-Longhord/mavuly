@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, InternalServerErrorException } from '@nestjs/common';
+import { Injectable, BadRequestException, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { WithdrawDto } from './dto/withdraw.dto';
@@ -132,5 +132,56 @@ export class LedgerService {
                 type: tx.type,
             };
         });
+    }
+
+    async handleFlutterwaveWebhook(signature: string, payload: any) {
+        // 1. Verify the webhook actually came from Flutterwave
+        const secretHash = this.configService.get<string>('FLUTTERWAVE_WEBHOOK_SECRET');
+        if (signature !== secretHash) {
+            throw new BadRequestException('Invalid webhook signature');
+        }
+
+        // 2. We only care about successful payments
+        if (payload.event === 'charge.completed' && payload.data.status === 'successful') {
+            const amountPaid = payload.data.amount;
+            const userEmail = payload.data.customer.email;
+            const txRef = payload.data.tx_ref; // Unique reference from the frontend
+
+            // 3. Prevent processing the same transaction twice
+            const existingTx = await this.prisma.escrowTransaction.findUnique({
+                where: { reference: txRef }
+            });
+            if (existingTx) return { message: 'Transaction already processed' };
+
+            // 4. Find the Developer by the email they used to pay
+            const developer = await this.prisma.user.findUnique({ where: { email: userEmail } });
+            if (!developer) throw new NotFoundException('Developer not found for this payment');
+
+            // 5. ATOMIC TRANSACTION: Add money to Escrow and Log it
+            await this.prisma.$transaction(async (tx) => {
+                // Increment their global escrow balance
+                await tx.user.update({
+                    where: { id: developer.id },
+                    data: { escrowBalance: { increment: amountPaid } }
+                });
+
+                // Log the Escrow Deposit
+                await tx.escrowTransaction.create({
+                    data: {
+                        developerId: developer.id,
+                        amount: amountPaid,
+                        type: 'DEPOSIT', // EscrowTxType.DEPOSIT
+                        status: 'COMPLETED',
+                        reference: txRef,
+                        metadata: payload.data, // Save Flutterwave's raw data just in case
+                    }
+                });
+            });
+
+            return { status: 'success' };
+        }
+
+        // If it was a failed payment or different event, just ignore it and return 200 OK to Flutterwave
+        return { status: 'ignored' };
     }
 }
