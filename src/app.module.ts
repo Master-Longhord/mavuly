@@ -10,6 +10,9 @@ import { ArcadeModule } from './modules/arcade/arcade.module';
 import { LeaderboardModule } from './modules/leaderboard/leaderboard.module';
 import { VerificationModule } from './modules/verification/verification.module';
 import { LedgerModule } from './modules/ledger/ledger.module';
+import { AdminModule } from './modules/admin/admin.module';
+import { CampaignsModule } from './modules/campaigns/campaigns.module';
+import { SubmissionsModule } from './modules/submissions/submissions.module';
 
 @Module({
   imports: [
@@ -23,6 +26,9 @@ import { LedgerModule } from './modules/ledger/ledger.module';
     LeaderboardModule,
     VerificationModule,
     LedgerModule,
+    AdminModule,
+    CampaignsModule,
+    SubmissionsModule,
   ],
   providers: [
     {
