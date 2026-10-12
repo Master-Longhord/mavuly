@@ -36,6 +36,15 @@ export class AuthService {
 
         console.log(`\n 🚀 DEV MODE - VERIFICATION CODE FOR ${dto.email}: ${verificationCode}\n`);
 
+        const baseName = dto.name.substring(0, 3).toUpperCase().replace(/[^A-Z]/g, 'USR');
+        const newReferralCode = `${baseName}${Math.floor(1000 + Math.random() * 9000)}`;
+
+        let referredById = null;
+        if (dto.referredByCode) {
+            const referrer = await this.prisma.user.findUnique({ where: { referralCode: dto.referredByCode } });
+            if (referrer) referredById = referrer.id;
+        }
+
         const user = await this.prisma.user.create({
             data: {
                 email: dto.email,
@@ -45,8 +54,27 @@ export class AuthService {
                 phone: dto.phone,
                 emailVerifyToken: verificationCode,
                 isEmailVerified: false,
+                referralCode: newReferralCode,
+                referredById: referredById,
             },
         });
+
+        if (referredById) {
+            await this.prisma.user.update({
+                where: { id: referredById },
+                data: { coinBalance: { increment: 100 } }
+            });
+            await this.prisma.transaction.create({
+                data: {
+                    userId: referredById,
+                    amount: 100,
+                    type: 'REFERRAL_BONUS',
+                    status: 'COMPLETED',
+                    reference: `REF-${user.id}`,
+                    description: `Referral bonus for inviting ${user.name}`
+                }
+            });
+        }
 
         // Send the 6-digit verification code to their email!
         await this.mailService.sendVerificationEmail(user.email, verificationCode);

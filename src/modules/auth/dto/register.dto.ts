@@ -1,4 +1,4 @@
-import { IsEmail, IsEnum, IsNotEmpty, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
 import { AccountType } from '@prisma/client';
 
 export class RegisterDto {
@@ -22,4 +22,8 @@ export class RegisterDto {
     @IsEnum(AccountType, { message: 'Account type must be either TESTER or DEVELOPER' })
     @IsNotEmpty()
     accountType: AccountType;
+
+    @IsString()
+    @IsOptional()
+    referredByCode?: string;
 }

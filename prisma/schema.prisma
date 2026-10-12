@@ -58,6 +58,7 @@ enum TransactionType {
   PVP_ENTRY
   WITHDRAWAL
   PLATFORM_PROFIT
+  REFERRAL_BONUS
 }
 
 enum TransactionStatus {
@@ -132,6 +133,14 @@ model User {
   submissions        TaskSubmission[] @relation("TesterSubmissions")
   escrowTransactions EscrowTransaction[]
   transactions       Transaction[]
+
+  referredBy         User?            @relation("UserReferrals", fields: [referredById], references: [id])
+  referrals          User[]           @relation("UserReferrals")
+  tickets            Ticket[]
+  userNotifications  Notification[]
+
+  dailyAdRefillsCount Int              @default(0) @map("daily_ad_refills_count")
+  lastAdRefillAt     DateTime?        @map("last_ad_refill_at")
   
   matchesAsPlayer1   ArcadeMatch[]    @relation("MatchPlayer1")
   matchesAsPlayer2   ArcadeMatch[]    @relation("MatchPlayer2")
@@ -310,4 +319,30 @@ model BankAccount {
   // Critical: Prevents multi-account reward farming
   @@unique([bankCode, accountNumber], name: "unique_bank_destination")
   @@map("bank_accounts")
+}
+
+model Ticket {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  subject     String
+  category    String
+  description String   @db.Text
+  status      String   @default("OPEN")
+  adminReply  String?  @db.Text @map("admin_reply")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  
+  user        User     @relation(fields: [userId], references: [id])
+  @@map("tickets")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  message   String
+  isRead    Boolean  @default(false) @map("is_read")
+  createdAt DateTime @default(now()) @map("created_at")
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@map("notifications")
 }

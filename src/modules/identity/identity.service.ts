@@ -29,6 +29,8 @@ export class IdentityService {
                 coinBalance: true,
                 escrowBalance: true,
                 createdAt: true,
+                isEmailVerified: true,
+                referralCode: true,
             },
         });
 
@@ -101,6 +103,28 @@ export class IdentityService {
         });
     }
 
+    // --- WALLET BALANCES (Available, Pending, Lifetime) ---
+    async getWalletBalances(userId: string) {
+        const user = await this.prisma.user.findUnique({ where: { id: userId } });
+        if (!user) throw new NotFoundException('User not found');
+
+        const available = user.coinBalance;
+
+        const pendingAgg = await this.prisma.transaction.aggregate({
+            where: { userId, status: 'PENDING', type: 'WITHDRAWAL' },
+            _sum: { amount: true }
+        });
+        const pending = Number(pendingAgg._sum?.amount || 0);
+
+        const lifetimeAgg = await this.prisma.transaction.aggregate({
+            where: { userId, type: { in: ['REWARD', 'PVP_WIN', 'REFERRAL_BONUS'] }, status: 'COMPLETED' },
+            _sum: { amount: true }
+        });
+        const lifetime = Number(lifetimeAgg._sum?.amount || 0);
+
+        return { available, pending, lifetime };
+    }
+
     // --- DAILY QUESTS DEFINITIONS ---
     private readonly QUEST_DEFS = {
         daily_debut: { id: 'daily_debut', title: 'Daily Debut', desc: 'Play 1 match of any game today.', field: 'matchesPlayedToday', target: 1, reward: 15 },
@@ -115,11 +139,9 @@ export class IdentityService {
 
         const today = new Date().toISOString().slice(0, 10);
 
-        // Progress only counts if their last active game was today
         const activeToday = user.lastStreakDate === today;
         const claimsToday = user.questClaimsDate === today ? user.questClaims : [];
 
-        // Map the quests into an array so the frontend can easily render the UI cards
         const quests = Object.values(this.QUEST_DEFS).map((q) => {
             const currentProgress = activeToday ? (user[q.field as keyof typeof user] as number || 0) : 0;
             return {
@@ -159,7 +181,6 @@ export class IdentityService {
                 throw new BadRequestException('Quest not yet completed.');
             }
 
-            // Update the user's claims array (resetting it if it's a new day)
             const updatedClaims = user.questClaimsDate === today ? [...user.questClaims, questId] : [questId];
 
             const updatedUser = await tx.user.update({
@@ -189,5 +210,43 @@ export class IdentityService {
                 newBalance: updatedUser.coinBalance,
             };
         });
+    }
+
+    // --- REFERRAL DASHBOARD ---
+    async getReferralStats(userId: string) {
+        const user = await this.prisma.user.findUnique({
+            where: { id: userId },
+            include: {
+                referrals: {
+                    select: { id: true, name: true, createdAt: true, isEmailVerified: true }
+                }
+            }
+        });
+
+        if (!user) throw new NotFoundException('User not found');
+
+        const earningsAgg = await this.prisma.transaction.aggregate({
+            where: { userId, type: 'REFERRAL_BONUS', status: 'COMPLETED' },
+            _sum: { amount: true }
+        });
+        // FIX: Added the ? to fix the TypeScript error!
+        const earnings = Number(earningsAgg._sum?.amount || 0);
+
+        const activeReferrals = user.referrals.filter((r) => r.isEmailVerified).length;
+
+        const history = user.referrals.map((r) => ({
+            name: r.name,
+            date: r.createdAt,
+            reward: 100,
+            status: r.isEmailVerified ? 'Completed' : 'Pending Verification'
+        }));
+
+        return {
+            referralCode: user.referralCode,
+            totalReferrals: user.referrals.length,
+            activeReferrals,
+            earnings,
+            history
+        };
     }
 }
