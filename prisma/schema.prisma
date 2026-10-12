@@ -92,6 +92,8 @@ model User {
   id                 String           @id @default(uuid())
   email              String           @unique
   passwordHash       String           @map("password_hash")
+  resetToken         String?          @map("reset_token")
+  resetTokenExpires  DateTime?        @map("reset_token_expires")
   role               Role             @default(USER)
   accountType        AccountType      @default(TESTER) @map("account_type")
   name               String?          // Used for Tester Name
@@ -105,6 +107,10 @@ model User {
   accountNumber      String?          @map("account_number")
   accountName        String?          @map("account_name")
   withdrawalVerified Boolean          @default(false) @map("withdrawal_verified")
+  isEmailVerified    Boolean          @default(false) @map("is_email_verified")
+  emailVerifyToken   String?          @map("email_verify_token")
+  referralCode       String?          @unique @map("referral_code")
+  referredById       String?          @map("referred_by_id")
 
   kycStatus          KycStatus        @default(UNVERIFIED) @map("kyc_status")
   bankAccount        BankAccount?
