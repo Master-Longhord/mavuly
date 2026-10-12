@@ -238,4 +238,25 @@ export class ArcadeService {
             },
         });
     }
+
+    // --- GET MATCH HISTORY FOR TESTER DASHBOARD ---
+    async getMatchHistory(userId: string) {
+        return this.prisma.arcadeMatch.findMany({
+            where: {
+                OR: [
+                    { player1Id: userId },
+                    { player2Id: userId }
+                ]
+            },
+            orderBy: { createdAt: 'desc' },
+            select: {
+                id: true,
+                gameType: true,
+                stakeAmount: true,
+                status: true,
+                winnerId: true,
+                createdAt: true,
+            }
+        });
+    }
 }

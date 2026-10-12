@@ -1,4 +1,4 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Get, Post } from '@nestjs/common';
 import { ArcadeService } from './arcade.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JoinMatchDto } from './dto/join-match.dto';
@@ -16,5 +16,10 @@ export class ArcadeController {
     @Post('submit-score')
     submitScore(@CurrentUser('id') userId: string, @Body() dto: SubmitScoreDto) {
         return this.arcadeService.submitScore(userId, dto);
+    }
+
+    @Get('history')
+    getMatchHistory(@CurrentUser('id') userId: string) {
+        return this.arcadeService.getMatchHistory(userId);
     }
 }

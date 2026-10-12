@@ -34,8 +34,18 @@ export class IdentityController {
     @Post('quests/claim')
     claimQuest(
         @CurrentUser('id') userId: string,
-        @Body() dto: ClaimQuestDto, // Ensure you import this!
+        @Body() dto: ClaimQuestDto,
     ) {
         return this.identityService.claimQuest(userId, dto.questId);
+    }
+
+    @Get('referrals')
+    getReferralStats(@CurrentUser('id') userId: string) {
+        return this.identityService.getReferralStats(userId);
+    }
+
+    @Get('wallet/balances')
+    getWalletBalances(@CurrentUser('id') userId: string) {
+        return this.identityService.getWalletBalances(userId);
     }
 }
