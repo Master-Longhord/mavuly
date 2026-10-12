@@ -249,4 +249,23 @@ export class IdentityService {
             history
         };
     }
+
+    async getNotifications(userId: string) {
+        const notifications = await this.prisma.notification.findMany({
+            where: { userId },
+            orderBy: { createdAt: 'desc' }
+        });
+
+        const unreadCount = notifications.filter(n => !n.isRead).length;
+
+        return { unreadCount, notifications };
+    }
+
+    async markNotificationsRead(userId: string) {
+        await this.prisma.notification.updateMany({
+            where: { userId, isRead: false },
+            data: { isRead: true }
+        });
+        return { message: 'All notifications marked as read' };
+    }
 }

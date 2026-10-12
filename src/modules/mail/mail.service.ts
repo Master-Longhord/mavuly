@@ -70,4 +70,30 @@ export class MailService {
             console.error('❌ BREVO ERROR:', error);
         }
     }
+
+    async sendContactFormNotification(userEmail: string, subject: string, message: string) {
+        const supportEmail = this.configService.get<string>('FROM_EMAIL') || 'support@mavuly.com';
+
+        const mailOptions = {
+            from: `"Mavuly Contact Form" <${supportEmail}>`,
+            to: supportEmail,
+            replyTo: userEmail,
+            subject: `[Contact Request] ${subject}`,
+            html: `
+        <div style="font-family: Arial, sans-serif; padding: 20px;">
+          <h3>New Message from Mavuly Contact Form</h3>
+          <p><strong>From:</strong> ${userEmail}</p>
+          <p><strong>Subject:</strong> ${subject}</p>
+          <hr />
+          <p style="white-space: pre-wrap;">${message}</p>
+        </div>
+      `,
+        };
+
+        try {
+            await this.transporter.sendMail(mailOptions);
+        } catch (error) {
+            console.error('Failed to send contact form email to Admin:', error);
+        }
+    }
 }
