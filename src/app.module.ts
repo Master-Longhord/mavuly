@@ -15,6 +15,7 @@ import { SubmissionsModule } from './modules/submissions/submissions.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { MailModule } from './modules/mail/mail.module';
+import { SupportModule } from './modules/support/support.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { MailModule } from './modules/mail/mail.module';
     CampaignsModule,
     SubmissionsModule,
     MailModule,
+    SupportModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

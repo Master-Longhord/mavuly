@@ -5,7 +5,16 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // Set global prefix to match your spec (/api/v1)
+  app.enableCors({
+    origin: [
+      'http://localhost:5173',
+      'https://mavuly.com',
+      'https://www.mavuly.com'
+    ],
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    credentials: true,
+  });
+
   app.setGlobalPrefix('api/v1');
 
   app.useGlobalPipes(

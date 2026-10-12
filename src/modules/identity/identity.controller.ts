@@ -48,4 +48,14 @@ export class IdentityController {
     getWalletBalances(@CurrentUser('id') userId: string) {
         return this.identityService.getWalletBalances(userId);
     }
+
+    @Get('notifications')
+    getNotifications(@CurrentUser('id') userId: string) {
+        return this.identityService.getNotifications(userId);
+    }
+
+    @Patch('notifications/read')
+    markNotificationsRead(@CurrentUser('id') userId: string) {
+        return this.identityService.markNotificationsRead(userId);
+    }
 }
