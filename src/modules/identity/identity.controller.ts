@@ -3,6 +3,8 @@ import { IdentityService } from './identity.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ClaimQuestDto } from './dto/claim-quest.dto';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { UpdatePostbackDto } from './dto/update-postback.dto';
 
 @Controller('identity')
 export class IdentityController {
@@ -57,5 +59,41 @@ export class IdentityController {
     @Patch('notifications/read')
     markNotificationsRead(@CurrentUser('id') userId: string) {
         return this.identityService.markNotificationsRead(userId);
+    }
+
+    @Roles('DEVELOPER')
+    @Patch('kyb-documents')
+    uploadKybDocuments(
+        @CurrentUser('id') userId: string,
+        @Body() dto: { businessDocUrl?: string; idDocUrl?: string; addressDocUrl?: string }
+    ) {
+        return this.identityService.uploadKybDocuments(userId, dto);
+    }
+
+    @Roles('DEVELOPER')
+    @Post('apps')
+    registerDeveloperApp(
+        @CurrentUser('id') userId: string,
+        @Body() dto: { name: string; type: string; version?: string; description?: string }
+    ) {
+        return this.identityService.registerDeveloperApp(userId, dto);
+    }
+
+    @Roles('DEVELOPER')
+    @Get('apps')
+    getDeveloperApps(@CurrentUser('id') userId: string) {
+        return this.identityService.getDeveloperApps(userId);
+    }
+
+    @Roles('DEVELOPER')
+    @Post('api-keys/generate')
+    generateApiKeys(@CurrentUser('id') userId: string) {
+        return this.identityService.generateApiKeys(userId);
+    }
+
+    @Roles('DEVELOPER')
+    @Patch('api-keys/postback')
+    updatePostbackUrl(@CurrentUser('id') userId: string, @Body() dto: UpdatePostbackDto) {
+        return this.identityService.updatePostbackUrl(userId, dto.postbackUrl);
     }
 }

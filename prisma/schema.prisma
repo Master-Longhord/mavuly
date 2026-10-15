@@ -126,6 +126,16 @@ model User {
   createdAt          DateTime         @default(now()) @map("created_at")
   updatedAt          DateTime         @updatedAt @map("updated_at")
 
+  // --- DEVELOPER KYB & API SETTINGS ---
+  businessDocUrl     String?          @map("business_doc_url")
+  idDocUrl           String?          @map("id_doc_url")
+  addressDocUrl      String?          @map("address_doc_url")
+  apiKey             String?          @unique @map("api_key")
+  apiSecret          String?          @map("api_secret")
+  postbackUrl        String?          @map("postback_url")
+  
+  apps               DeveloperApp[]   @relation("DeveloperApps")
+
   lastDailyClaim     DateTime?        @map("last_daily_claim")
 
   refreshTokens      RefreshToken[]
@@ -190,6 +200,11 @@ model Campaign {
   status             CampaignStatus   @default(ACTIVE)
   createdAt          DateTime         @default(now()) @map("created_at")
   updatedAt          DateTime         @updatedAt @map("updated_at")
+  productType        String           @default("App") @map("product_type")
+  platforms          String[]         @default(["Android"])
+  description        String?          @db.Text
+  version            String?
+  deadline           DateTime?
 
   developer          User             @relation("DeveloperCampaigns", fields: [developerId], references: [id])
   submissions        TaskSubmission[]
@@ -228,6 +243,8 @@ model Feedback {
   stepsToReproduce   String?        @db.Text @map("steps_to_reproduce")
   screenshotUrl      String         @map("screenshot_url")
   deviceInfo         Json           @map("device_info")
+  bugSeverity        String?          @map("bug_severity")
+bugStatus          String           @default("OPEN") @map("bug_status")
   comments           String?        @db.Text
   createdAt          DateTime       @default(now()) @map("created_at")
 
@@ -345,4 +362,21 @@ model Notification {
   
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   @@map("notifications")
+}
+
+model DeveloperApp {
+  id               String   @id @default(uuid())
+  developerId      String   @map("developer_id")
+  name             String
+  type             String   @default("App")
+  version          String?
+  description      String?  @db.Text
+  moderationStatus String   @default("PENDING") @map("moderation_status") // PENDING, APPROVED, REJECTED
+  moderationNotes  String?  @db.Text @map("moderation_notes")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  developer        User     @relation("DeveloperApps", fields: [developerId], references: [id], onDelete: Cascade)
+
+  @@map("developer_apps")
 }

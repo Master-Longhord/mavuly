@@ -124,7 +124,6 @@ export class ArcadeService {
                     : { player2Score: serverScore, player2CompletedAt: now },
             });
 
-            // --- RECORD DAILY GAME STREAK ---
             await this.updateUserStreak(tx, userId, match.gameType);
 
             if (match.isBotOpponent) {
@@ -133,11 +132,11 @@ export class ArcadeService {
                     where: { id: match.id },
                     data: { player2Score: botScore, player2CompletedAt: now },
                 });
-                return this.settleMatch(tx, updatedMatch);
+                return this.settleMatch(tx, updatedMatch, userId);
             }
 
             if (updatedMatch.player1Score !== null && updatedMatch.player2Score !== null) {
-                return this.settleMatch(tx, updatedMatch);
+                return this.settleMatch(tx, updatedMatch, userId);
             }
 
             return {
@@ -147,10 +146,13 @@ export class ArcadeService {
         });
     }
 
-    private async settleMatch(tx: any, match: any) {
+    private async settleMatch(tx: any, match: any, userId: string) {
         const p1Score = match.player1Score;
         const p2Score = match.player2Score;
         const isTie = p1Score === p2Score;
+
+        const playerScore = match.player1Id === userId ? p1Score : p2Score;
+        const opponentScore = match.player1Id === userId ? p2Score : p1Score;
 
         let winnerId = null;
         if (!isTie) {
@@ -171,11 +173,11 @@ export class ArcadeService {
             if (!match.isBotOpponent) {
                 await tx.user.update({ where: { id: match.player2Id }, data: { coinBalance: { increment: match.stakeAmount } } });
             }
-            return { status: MatchStatus.SETTLED, message: 'Tie - stake refunded', winnerId: null };
+            return { status: MatchStatus.SETTLED, message: 'Tie - stake refunded', winnerId: null, playerScore, opponentScore };
         }
 
         if (winnerId === 'ghost_bot') {
-            return { status: MatchStatus.SETTLED, message: 'The bot won this round', winnerId: 'ghost_bot', opponentScore: p2Score };
+            return { status: MatchStatus.SETTLED, message: 'The bot won this round', winnerId: 'ghost_bot', playerScore, opponentScore };
         }
 
         await tx.user.update({
@@ -196,16 +198,16 @@ export class ArcadeService {
 
         return {
             status: MatchStatus.SETTLED,
-            message: 'You won!',
+            message: winnerId === userId ? 'You won!' : 'You lost this round.',
             winnerId,
             prize: match.prizeAmount,
-            opponentScore: winnerId === match.player1Id ? p2Score : p1Score
+            playerScore,
+            opponentScore
         };
     }
 
-    // --- AUTOMATED STREAK HELPER ---
     private async updateUserStreak(tx: any, userId: string, gameType: GameType) {
-        const today = new Date().toISOString().slice(0, 10); // UTC YYYY-MM-DD
+        const today = new Date().toISOString().slice(0, 10);
         const user = await tx.user.findUnique({ where: { id: userId } });
         if (!user) return;
 
@@ -221,7 +223,7 @@ export class ArcadeService {
                 const lastDate = new Date(user.lastStreakDate);
                 const currentDate = new Date(today);
                 const diffDays = Math.round((currentDate.getTime() - lastDate.getTime()) / 86400000);
-                newStreak = diffDays === 1 ? newStreak + 1 : 1; // Increment if consecutive, otherwise reset
+                newStreak = diffDays === 1 ? newStreak + 1 : 1;
             } else {
                 newStreak = 1;
             }
@@ -239,7 +241,6 @@ export class ArcadeService {
         });
     }
 
-    // --- GET MATCH HISTORY FOR TESTER DASHBOARD ---
     async getMatchHistory(userId: string) {
         return this.prisma.arcadeMatch.findMany({
             where: {

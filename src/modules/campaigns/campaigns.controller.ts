@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { CampaignsService } from './campaigns.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -32,5 +32,11 @@ export class CampaignsController {
     @Get('mine')
     getMyCampaigns(@CurrentUser('id') developerId: string) {
         return this.campaignsService.getDeveloperCampaigns(developerId);
+    }
+
+    @Public()
+    @Get(':id')
+    getCampaignById(@Param('id') campaignId: string) {
+        return this.campaignsService.getCampaignById(campaignId);
     }
 }
