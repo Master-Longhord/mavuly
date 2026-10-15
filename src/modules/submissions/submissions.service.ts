@@ -1,9 +1,10 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { StartSubmissionDto } from './dto/start-submission.dto';
 import { SubmitTaskDto } from './dto/submit-task.dto';
 import { ReviewAction, ReviewSubmissionDto } from './dto/review-submission.dto';
 import { SubmissionStatus, TransactionType, AccountType } from '@prisma/client';
+import { VerifyPostbackDto } from './dto/verify-postback.dto';
 
 @Injectable()
 export class SubmissionsService {
@@ -152,14 +153,107 @@ export class SubmissionsService {
     async getDeveloperSubmissions(developerId: string) {
         return this.prisma.taskSubmission.findMany({
             where: {
-                campaign: { developerId } // Find submissions tied to campaigns owned by this dev
+                campaign: { developerId }
             },
             include: {
                 campaign: { select: { title: true, appName: true, rewardPerTask: true } },
-                feedback: true, // Includes the screenshot URL, device info, and bug reports!
-                tester: { select: { name: true, email: true } } // So the dev knows who tested it
+                feedback: true,
+                tester: { select: { name: true, email: true } }
             },
             orderBy: { startedAt: 'desc' },
+        });
+    }
+
+    async verifyPostback(apiKey: string, dto: VerifyPostbackDto) {
+        const developer = await this.prisma.user.findUnique({
+            where: { apiKey }
+        });
+
+        if (!developer || developer.accountType !== 'DEVELOPER') {
+            throw new UnauthorizedException('Invalid API Key');
+        }
+
+        const submission = await this.prisma.taskSubmission.findUnique({
+            where: { id: dto.mav_uid },
+            include: { campaign: true }
+        });
+
+        if (!submission) {
+            throw new NotFoundException('Submission not found for this mav_uid');
+        }
+
+        if (submission.campaign.developerId !== developer.id) {
+            throw new ForbiddenException('This submission belongs to a different developer');
+        }
+
+        if (submission.status === SubmissionStatus.APPROVED) {
+            return { message: 'Submission was already approved and paid out.' };
+        }
+
+        const rewardAmount = submission.campaign.rewardPerTask;
+
+        await this.prisma.$transaction(async (tx) => {
+            await tx.taskSubmission.update({
+                where: { id: submission.id },
+                data: {
+                    status: SubmissionStatus.APPROVED,
+                    verifiedAt: new Date(),
+                    verificationStatus: `Auto-approved via S2S Postback (Event: ${dto.event})`
+                }
+            });
+
+            await tx.user.update({
+                where: { id: submission.testerId },
+                data: { escrowBalance: { increment: rewardAmount } }
+            });
+
+            await tx.transaction.create({
+                data: {
+                    userId: submission.testerId,
+                    submissionId: submission.id,
+                    amount: rewardAmount,
+                    type: TransactionType.REWARD,
+                    status: 'COMPLETED',
+                    reference: `S2S-REWARD-${submission.id}`,
+                    description: `Auto-Reward for testing ${submission.campaign.appName}`,
+                }
+            });
+
+            await tx.campaign.update({
+                where: { id: submission.campaign.id },
+                data: {
+                    budgetRemaining: { decrement: rewardAmount },
+                    completedTesters: { increment: 1 },
+                }
+            });
+        });
+
+        return {
+            status: 'success',
+            message: 'Tester successfully auto-approved and rewarded!'
+        };
+    }
+
+    async updateBugStatus(developerId: string, feedbackId: string, bugStatus: string, bugSeverity?: string) {
+        // 1. Find the feedback and check if the dev owns the campaign it belongs to
+        const feedback = await this.prisma.feedback.findUnique({
+            where: { id: feedbackId },
+            include: { submission: { include: { campaign: true } } }
+        });
+
+        if (!feedback) throw new NotFoundException('Feedback/Bug report not found');
+
+        if (feedback.submission.campaign.developerId !== developerId) {
+            throw new ForbiddenException('You do not own the campaign for this bug report');
+        }
+
+        // 2. Update the status and severity
+        return this.prisma.feedback.update({
+            where: { id: feedbackId },
+            data: {
+                bugStatus,
+                ...(bugSeverity && { bugSeverity })
+            }
         });
     }
 }

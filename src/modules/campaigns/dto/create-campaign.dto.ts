@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsUrl, IsNumber, Min, IsArray, IsObject, IsOptional } from 'class-validator';
+import { IsString, IsNotEmpty, IsUrl, IsNumber, Min, IsArray, IsObject, IsOptional, IsDateString } from 'class-validator';
 
 export class CreateCampaignDto {
     @IsString()
@@ -40,4 +40,26 @@ export class CreateCampaignDto {
     @IsNumber()
     @Min(1) // Minimum reward per tester in real money (e.g., $1.00 or ₦1000)
     rewardPerTask: number;
+
+    // --- NEW FIELDS FOR FRONTEND ---
+    @IsString()
+    @IsOptional()
+    productType?: string; // App, Website, Game
+
+    @IsArray()
+    @IsString({ each: true })
+    @IsOptional()
+    platforms?: string[]; // ["Android", "iOS"]
+
+    @IsString()
+    @IsOptional()
+    description?: string;
+
+    @IsString()
+    @IsOptional()
+    version?: string;
+
+    @IsDateString()
+    @IsOptional()
+    deadline?: string;
 }

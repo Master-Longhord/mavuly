@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { AccountType, EscrowTxType } from '@prisma/client';
@@ -46,6 +46,12 @@ export class CampaignsService {
                     totalBudget: baseBudget,
                     budgetRemaining: baseBudget,
                     platformFeePercent: platformFeePercent,
+                    // --- NEW FIELDS SAVED HERE ---
+                    productType: dto.productType || 'App',
+                    platforms: dto.platforms || ['Android'],
+                    description: dto.description,
+                    version: dto.version,
+                    deadline: dto.deadline ? new Date(dto.deadline) : null,
                 },
             });
 
@@ -107,5 +113,22 @@ export class CampaignsService {
             where: { developerId },
             orderBy: { createdAt: 'desc' },
         });
+    }
+
+    async getCampaignById(campaignId: string) {
+        const campaign = await this.prisma.campaign.findUnique({
+            where: { id: campaignId },
+            include: {
+                developer: { select: { studioName: true, name: true } }, // Show who made the app
+            }
+        });
+
+        if (!campaign) {
+            throw new NotFoundException('Campaign not found');
+        }
+
+        // Hide targetUrl from testers unless they officially "Start" the task
+        const { targetUrl, ...safeCampaign } = campaign;
+        return safeCampaign;
     }
 }

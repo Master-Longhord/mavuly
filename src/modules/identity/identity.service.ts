@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import * as crypto from 'crypto';
 
 @Injectable()
 export class IdentityService {
@@ -31,6 +32,12 @@ export class IdentityService {
                 createdAt: true,
                 isEmailVerified: true,
                 referralCode: true,
+                businessDocUrl: true,
+                idDocUrl: true,
+                addressDocUrl: true,
+                apiKey: true,
+                apiSecret: true,
+                postbackUrl: true,
             },
         });
 
@@ -267,5 +274,82 @@ export class IdentityService {
             data: { isRead: true }
         });
         return { message: 'All notifications marked as read' };
+    }
+
+    async uploadKybDocuments(userId: string, dto: { businessDocUrl?: string; idDocUrl?: string; addressDocUrl?: string }) {
+        const user = await this.prisma.user.findUnique({ where: { id: userId } });
+        if (!user || user.accountType !== 'DEVELOPER') {
+            throw new ForbiddenException('Only developers can upload KYB documents');
+        }
+
+        await this.prisma.user.update({
+            where: { id: userId },
+            data: {
+                businessDocUrl: dto.businessDocUrl || user.businessDocUrl,
+                idDocUrl: dto.idDocUrl || user.idDocUrl,
+                addressDocUrl: dto.addressDocUrl || user.addressDocUrl,
+                // Once they upload an ID, we mark them as Pending Review
+                kycStatus: 'PENDING'
+            }
+        });
+
+        return { message: 'Documents uploaded successfully. Pending admin verification.' };
+    }
+
+    // --- DEVELOPER APPS ("My Apps" Tab) ---
+    async registerDeveloperApp(developerId: string, dto: { name: string; type: string; version?: string; description?: string }) {
+        return this.prisma.developerApp.create({
+            data: {
+                developerId,
+                name: dto.name,
+                type: dto.type,
+                version: dto.version,
+                description: dto.description,
+                moderationStatus: 'PENDING',
+            }
+        });
+    }
+
+    async getDeveloperApps(developerId: string) {
+        return this.prisma.developerApp.findMany({
+            where: { developerId },
+            orderBy: { createdAt: 'desc' }
+        });
+    }
+
+    async generateApiKeys(userId: string) {
+        const user = await this.prisma.user.findUnique({ where: { id: userId } });
+        if (!user || user.accountType !== 'DEVELOPER') {
+            throw new ForbiddenException('Only developers can generate API keys');
+        }
+
+        const apiKey = `pk_test_${crypto.randomBytes(16).toString('hex')}`;
+        const apiSecret = `sk_test_${crypto.randomBytes(24).toString('hex')}`;
+
+        await this.prisma.user.update({
+            where: { id: userId },
+            data: { apiKey, apiSecret }
+        });
+
+        return {
+            message: 'API Keys generated successfully',
+            apiKey,
+            apiSecret,
+            embedSnippet: `<script src="https://mavuly.com/sdk.js" data-api-key="${apiKey}"></script>`
+        };
+    }
+
+    async updatePostbackUrl(userId: string, postbackUrl: string) {
+        const user = await this.prisma.user.findUnique({ where: { id: userId } });
+        if (!user || user.accountType !== 'DEVELOPER') {
+            throw new ForbiddenException('Only developers can set a postback URL');
+        }
+
+        await this.prisma.user.update({
+            where: { id: userId },
+            data: { postbackUrl }
+        });
+
+        return { message: 'Postback URL saved successfully', postbackUrl };
     }
 }
