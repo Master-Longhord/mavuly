@@ -170,10 +170,10 @@ export class LedgerService {
                     data: {
                         developerId: developer.id,
                         amount: amountPaid,
-                        type: 'DEPOSIT', // EscrowTxType.DEPOSIT
+                        type: 'DEPOSIT',
                         status: 'COMPLETED',
                         reference: txRef,
-                        metadata: payload.data, // Save Flutterwave's raw data just in case
+                        metadata: payload.data,
                     }
                 });
             });
@@ -181,7 +181,13 @@ export class LedgerService {
             return { status: 'success' };
         }
 
-        // If it was a failed payment or different event, just ignore it and return 200 OK to Flutterwave
         return { status: 'ignored' };
+    }
+
+    async getEscrowHistory(developerId: string) {
+        return this.prisma.escrowTransaction.findMany({
+            where: { developerId },
+            orderBy: { createdAt: 'desc' }
+        });
     }
 }
