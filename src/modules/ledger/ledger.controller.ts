@@ -3,6 +3,8 @@ import { LedgerService } from './ledger.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { WithdrawDto } from './dto/withdraw.dto';
 import { Public } from '../../common/decorators/public.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { AccountType } from '@prisma/client';
 
 @Controller('ledger')
 export class LedgerController {
@@ -28,5 +30,11 @@ export class LedgerController {
         @Body() payload: any
     ) {
         return this.ledgerService.handleFlutterwaveWebhook(signature, payload);
+    }
+
+    @Roles(AccountType.DEVELOPER)
+    @Get('escrow-history')
+    getEscrowHistory(@CurrentUser('id') developerId: string) {
+        return this.ledgerService.getEscrowHistory(developerId);
     }
 }
