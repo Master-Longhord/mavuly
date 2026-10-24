@@ -37,4 +37,9 @@ export class LedgerController {
     getEscrowHistory(@CurrentUser('id') developerId: string) {
         return this.ledgerService.getEscrowHistory(developerId);
     }
+
+    @Post('convert-coins')
+    convertCoins(@CurrentUser('id') userId: string, @Body('coins') coins: number) {
+        return this.ledgerService.convertCoinsToDollars(userId, coins);
+    }
 }

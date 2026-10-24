@@ -339,6 +339,43 @@ export class IdentityService {
         };
     }
 
+    // --- ADSTERRA AD REFILL ---
+    async claimAdRefill(userId: string) {
+        const REWARD = 25;
+
+        return this.prisma.$transaction(async (tx) => {
+            const user = await tx.user.findUnique({ where: { id: userId } });
+            if (!user) throw new NotFoundException('User not found');
+
+            // Give them 25 coins instantly
+            const updatedUser = await tx.user.update({
+                where: { id: userId },
+                data: {
+                    coinBalance: { increment: REWARD },
+                    lastAdRefillAt: new Date(),
+                },
+            });
+
+            await tx.transaction.create({
+                data: {
+                    userId,
+                    amount: REWARD,
+                    type: 'REWARD',
+                    status: 'COMPLETED',
+                    reference: `AD-REFILL-${Date.now()}-${userId}`,
+                    description: 'Watched Adsterra Ad Refill',
+                },
+            });
+
+            return {
+                success: true,
+                message: 'Ad reward claimed!',
+                reward: REWARD,
+                newBalance: updatedUser.coinBalance
+            };
+        });
+    }
+
     async updatePostbackUrl(userId: string, postbackUrl: string) {
         const user = await this.prisma.user.findUnique({ where: { id: userId } });
         if (!user || user.accountType !== 'DEVELOPER') {

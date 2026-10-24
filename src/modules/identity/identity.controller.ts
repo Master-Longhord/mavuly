@@ -96,4 +96,9 @@ export class IdentityController {
     updatePostbackUrl(@CurrentUser('id') userId: string, @Body() dto: UpdatePostbackDto) {
         return this.identityService.updatePostbackUrl(userId, dto.postbackUrl);
     }
+
+    @Post('ad-refill')
+    claimAdRefill(@CurrentUser('id') userId: string) {
+        return this.identityService.claimAdRefill(userId);
+    }
 }
