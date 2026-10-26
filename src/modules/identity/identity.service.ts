@@ -114,22 +114,25 @@ export class IdentityService {
     async getWalletBalances(userId: string) {
         const user = await this.prisma.user.findUnique({ where: { id: userId } });
         if (!user) throw new NotFoundException('User not found');
-
-        const available = user.coinBalance;
-
+        const availableCoins = user.coinBalance;
+        const availableUsd = Number(user.escrowBalance || 0);
         const pendingAgg = await this.prisma.transaction.aggregate({
             where: { userId, status: 'PENDING', type: 'WITHDRAWAL' },
             _sum: { amount: true }
         });
-        const pending = Number(pendingAgg._sum?.amount || 0);
-
+        const pendingUsd = Number(pendingAgg._sum?.amount || 0);
         const lifetimeAgg = await this.prisma.transaction.aggregate({
             where: { userId, type: { in: ['REWARD', 'PVP_WIN', 'REFERRAL_BONUS'] }, status: 'COMPLETED' },
             _sum: { amount: true }
         });
-        const lifetime = Number(lifetimeAgg._sum?.amount || 0);
+        const lifetimeCoins = Number(lifetimeAgg._sum?.amount || 0);
 
-        return { available, pending, lifetime };
+        return {
+            availableCoins,
+            availableUsd,
+            pendingUsd,
+            lifetimeCoins
+        };
     }
 
     // --- DAILY QUESTS DEFINITIONS ---
@@ -236,7 +239,6 @@ export class IdentityService {
             where: { userId, type: 'REFERRAL_BONUS', status: 'COMPLETED' },
             _sum: { amount: true }
         });
-        // FIX: Added the ? to fix the TypeScript error!
         const earnings = Number(earningsAgg._sum?.amount || 0);
 
         const activeReferrals = user.referrals.filter((r) => r.isEmailVerified).length;
@@ -346,8 +348,6 @@ export class IdentityService {
         return this.prisma.$transaction(async (tx) => {
             const user = await tx.user.findUnique({ where: { id: userId } });
             if (!user) throw new NotFoundException('User not found');
-
-            // Give them 25 coins instantly
             const updatedUser = await tx.user.update({
                 where: { id: userId },
                 data: {
