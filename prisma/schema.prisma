@@ -73,6 +73,7 @@ enum GameType {
   MATH_DUEL
   TRIVIA_RUSH
   TILE_MATCH
+  WHOT
 }
 
 enum MatchStatus {
@@ -143,6 +144,9 @@ model User {
   submissions        TaskSubmission[] @relation("TesterSubmissions")
   escrowTransactions EscrowTransaction[]
   transactions       Transaction[]
+  hostedMatches      MultiplayerMatch[] @relation("MatchHost")
+  wonMultiMatches    MultiplayerMatch[] @relation("MultiplayerWinner")
+  matchParticipations MatchParticipant[] @relation("UserMatchParticipations")
 
   referredBy         User?            @relation("UserReferrals", fields: [referredById], references: [id])
   referrals          User[]           @relation("UserReferrals")
@@ -379,4 +383,42 @@ model DeveloperApp {
   developer        User     @relation("DeveloperApps", fields: [developerId], references: [id], onDelete: Cascade)
 
   @@map("developer_apps")
+}
+
+model MultiplayerMatch {
+  id            String        @id @default(uuid())
+  roomCode      String        @unique @map("room_code")
+  gameType      GameType      @map("game_type")
+  stakeAmount   Int           @default(50) @map("stake_amount")
+  prizePool     Int           @default(0)  @map("prize_pool") // Grows as players join
+  maxPlayers    Int           @default(4)  @map("max_players") // 2, 3, or 4 players
+  status        MatchStatus   @default(WAITING_OPPONENT)
+  
+  hostId        String        @map("host_id") // The person who created the room
+  winnerId      String?       @map("winner_id")
+  
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  host          User          @relation("MatchHost", fields: [hostId], references: [id])
+  winner        User?         @relation("MultiplayerWinner", fields: [winnerId], references: [id])
+  participants  MatchParticipant[]
+
+  @@map("multiplayer_matches")
+}
+
+model MatchParticipant {
+  id                 String           @id @default(uuid())
+  matchId            String           @map("match_id")
+  userId             String           @map("user_id")
+  
+  score              Int?             // For Whot, could be remaining card count (0 = winner)
+  completedAt        DateTime?        @map("completed_at")
+  joinedAt           DateTime         @default(now()) @map("joined_at")
+
+  match              MultiplayerMatch @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  user               User             @relation("UserMatchParticipations", fields: [userId], references: [id])
+
+  @@unique([matchId, userId]) // Prevents a user from joining the same room twice
+  @@map("match_participants")
 }
