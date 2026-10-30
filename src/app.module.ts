@@ -16,6 +16,7 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { MailModule } from './modules/mail/mail.module';
 import { SupportModule } from './modules/support/support.module';
+import { MultiplayerModule } from './modules/multiplayer/multiplayer.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { SupportModule } from './modules/support/support.module';
     SubmissionsModule,
     MailModule,
     SupportModule,
+    MultiplayerModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
