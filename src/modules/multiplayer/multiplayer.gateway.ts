@@ -7,6 +7,8 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { MultiplayerService } from './multiplayer.service';
 import { WhotService } from './games/whot.service';
+import { UnoService } from './games/uno.service';
+import { PrismaService } from '../../common/prisma/prisma.service';
 import { GameType } from '@prisma/client';
 
 @WebSocketGateway({ cors: { origin: '*' } })
@@ -20,7 +22,9 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
     private jwtService: JwtService,
     private configService: ConfigService,
     private multiplayerService: MultiplayerService,
-    private whotService: WhotService
+    private whotService: WhotService,
+    private unoService: UnoService,
+    private prisma: PrismaService
   ) { }
 
   async handleConnection(client: Socket) {
@@ -88,16 +92,26 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
   ) {
     try {
       const match = await this.multiplayerService.startGame(client.data.userId, payload.matchId);
-
       const userIds = (match as any).participants.map((p: any) => p.userId);
-      const gameState = this.whotService.initializeGame(payload.matchId, userIds);
+
+      let gameState: any;
+
+      // TRAFFIC COP: Route to the correct game engine
+      if (match.gameType === 'WHOT') {
+        gameState = this.whotService.initializeGame(payload.matchId, userIds);
+      } else if (match.gameType === 'UNO') {
+        gameState = this.unoService.initializeGame(payload.matchId, userIds);
+      } else {
+        throw new Error('Game logic not implemented for this GameType yet.');
+      }
+
       const topCard = gameState.playedCards[gameState.playedCards.length - 1];
 
       this.server.to(payload.matchId).emit('game_started', {
         matchId: payload.matchId,
         currentTurnUserId: gameState.currentTurnUserId,
         topCard,
-        activeShape: gameState.activeShape
+        activeShape: gameState.activeShape || gameState.activeColor
       });
 
       for (const player of gameState.players) {
@@ -115,9 +129,21 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
   }
 
   @SubscribeMessage('play_card')
-  async handlePlayCard(@ConnectedSocket() client: Socket, @MessageBody() payload: { matchId: string, cardId: string, requestedShape?: GameType }) {
+  async handlePlayCard(@ConnectedSocket() client: Socket, @MessageBody() payload: { matchId: string, cardId: string, requestedShape?: string }) {
     try {
-      const { game, winnerId } = this.whotService.playCard(payload.matchId, client.data.userId, payload.cardId, payload.requestedShape as any);
+      const match = await this.prisma.multiplayerMatch.findUnique({ where: { id: payload.matchId } });
+      if (!match) throw new Error('Match not found');
+
+      let gameResult: any;
+
+      // TRAFFIC COP: Route move to correct engine
+      if (match.gameType === 'WHOT') {
+        gameResult = this.whotService.playCard(payload.matchId, client.data.userId, payload.cardId, payload.requestedShape as any);
+      } else if (match.gameType === 'UNO') {
+        gameResult = this.unoService.playCard(payload.matchId, client.data.userId, payload.cardId, payload.requestedShape as any);
+      }
+
+      const { game, winnerId } = gameResult;
 
       if (winnerId) {
         const result = await this.multiplayerService.settleGame(payload.matchId, winnerId);
@@ -127,40 +153,52 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
         this.server.to(payload.matchId).emit('game_state_update', {
           currentTurnUserId: game.currentTurnUserId,
           topCard,
-          activeShape: game.activeShape,
-          playerCardCounts: game.players.map(p => ({ userId: p.userId, count: p.hand.length }))
+          activeShape: game.activeShape || game.activeColor,
+          playerCardCounts: game.players.map((p: any) => ({ userId: p.userId, count: p.hand.length }))
         });
 
-        // <-- THIS FIXES THE ERROR! -->
-        const player = game.players.find(p => p.userId === client.data.userId);
+        const player = game.players.find((p: any) => p.userId === client.data.userId);
         if (player) {
           client.emit('receive_cards', { hand: player.hand });
         }
       }
     } catch (e) {
-      client.emit('error', { message: (e as any).message });
+      const error = e as any;
+      client.emit('error', { message: error.message });
     }
   }
 
   @SubscribeMessage('draw_market')
   async handleDrawMarket(@ConnectedSocket() client: Socket, @MessageBody() payload: { matchId: string }) {
     try {
-      const { game, drawnCards } = this.whotService.drawMarket(payload.matchId, client.data.userId, 1);
+      const match = await this.prisma.multiplayerMatch.findUnique({ where: { id: payload.matchId } });
+      if (!match) throw new Error('Match not found');
+
+      let gameResult: any;
+
+      // TRAFFIC COP: Route draw request to correct engine
+      if (match.gameType === 'WHOT') {
+        gameResult = this.whotService.drawMarket(payload.matchId, client.data.userId, 1);
+      } else if (match.gameType === 'UNO') {
+        gameResult = this.unoService.drawMarket(payload.matchId, client.data.userId, 1);
+      }
+
+      const { game } = gameResult;
 
       this.server.to(payload.matchId).emit('game_state_update', {
         currentTurnUserId: game.currentTurnUserId,
         topCard: game.playedCards[game.playedCards.length - 1],
-        activeShape: game.activeShape,
-        playerCardCounts: game.players.map(p => ({ userId: p.userId, count: p.hand.length }))
+        activeShape: game.activeShape || game.activeColor,
+        playerCardCounts: game.players.map((p: any) => ({ userId: p.userId, count: p.hand.length }))
       });
 
-      // <-- THIS FIXES THE ERROR! -->
-      const player = game.players.find(p => p.userId === client.data.userId);
+      const player = game.players.find((p: any) => p.userId === client.data.userId);
       if (player) {
         client.emit('receive_cards', { hand: player.hand });
       }
     } catch (e) {
-      client.emit('error', { message: (e as any).message });
+      const error = e as any;
+      client.emit('error', { message: error.message });
     }
   }
 }

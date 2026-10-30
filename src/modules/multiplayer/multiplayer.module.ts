@@ -3,9 +3,10 @@ import { MultiplayerService } from './multiplayer.service';
 import { MultiplayerGateway } from './multiplayer.gateway';
 import { JwtModule } from '@nestjs/jwt';
 import { WhotService } from './games/whot.service';
+import { UnoService } from './games/uno.service';
 
 @Module({
   imports: [JwtModule],
-  providers: [MultiplayerGateway, MultiplayerService, WhotService],
+  providers: [MultiplayerGateway, MultiplayerService, WhotService, UnoService],
 })
 export class MultiplayerModule { }
