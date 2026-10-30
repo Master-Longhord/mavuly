@@ -73,7 +73,12 @@ enum GameType {
   MATH_DUEL
   TRIVIA_RUSH
   TILE_MATCH
+  SNOOKER
   WHOT
+  UNO
+  SPIDER
+  LUDO
+  MONOPOLY
 }
 
 enum MatchStatus {
