@@ -26,6 +26,9 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+# Install curl and wget for Coolify Healthchecks
+RUN apk add --no-cache curl wget
+
 # Copy necessary files from the builder stage
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package*.json ./
