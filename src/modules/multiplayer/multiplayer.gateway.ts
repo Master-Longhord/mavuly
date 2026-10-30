@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { MultiplayerService } from './multiplayer.service';
 import { WhotService } from './games/whot.service';
 import { UnoService } from './games/uno.service';
+import { LudoService } from './games/ludo.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { GameType } from '@prisma/client';
 
@@ -24,6 +25,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
     private multiplayerService: MultiplayerService,
     private whotService: WhotService,
     private unoService: UnoService,
+    private ludoService: LudoService,
     private prisma: PrismaService
   ) { }
 
@@ -60,7 +62,6 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
       const match = await this.multiplayerService.createPrivateRoom(
         client.data.userId, payload.gameType, payload.stakeAmount, payload.maxPlayers
       );
-
       client.join(match.id);
       client.emit('room_created', { match });
     } catch (e) {
@@ -76,7 +77,6 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
   ) {
     try {
       const match = await this.multiplayerService.joinRoom(client.data.userId, payload.roomCode);
-
       client.join(match.id);
       this.server.to(match.id).emit('player_joined', { match });
     } catch (e) {
@@ -96,30 +96,37 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
 
       let gameState: any;
 
-      // TRAFFIC COP: Route to the correct game engine
       if (match.gameType === 'WHOT') {
         gameState = this.whotService.initializeGame(payload.matchId, userIds);
       } else if (match.gameType === 'UNO') {
         gameState = this.unoService.initializeGame(payload.matchId, userIds);
+      } else if (match.gameType === 'LUDO') {
+        gameState = this.ludoService.initializeGame(payload.matchId, userIds);
       } else {
         throw new Error('Game logic not implemented for this GameType yet.');
       }
 
-      const topCard = gameState.playedCards[gameState.playedCards.length - 1];
+      if (match.gameType === 'LUDO') {
+        this.server.to(payload.matchId).emit('game_started', {
+          matchId: payload.matchId,
+          currentTurnUserId: gameState.currentTurnUserId,
+          gameState
+        });
+      } else {
+        const topCard = gameState.playedCards[gameState.playedCards.length - 1];
+        this.server.to(payload.matchId).emit('game_started', {
+          matchId: payload.matchId,
+          currentTurnUserId: gameState.currentTurnUserId,
+          topCard,
+          activeShape: gameState.activeShape || gameState.activeColor
+        });
 
-      this.server.to(payload.matchId).emit('game_started', {
-        matchId: payload.matchId,
-        currentTurnUserId: gameState.currentTurnUserId,
-        topCard,
-        activeShape: gameState.activeShape || gameState.activeColor
-      });
-
-      for (const player of gameState.players) {
-        const playerSocketId = [...this.connectedUsers.entries()]
-          .find(([socketId, uid]) => uid === player.userId)?.[0];
-
-        if (playerSocketId) {
-          this.server.to(playerSocketId).emit('receive_cards', { hand: player.hand });
+        for (const player of gameState.players) {
+          const playerSocketId = [...this.connectedUsers.entries()]
+            .find(([socketId, uid]) => uid === player.userId)?.[0];
+          if (playerSocketId) {
+            this.server.to(playerSocketId).emit('receive_cards', { hand: player.hand });
+          }
         }
       }
     } catch (e) {
@@ -136,7 +143,6 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
 
       let gameResult: any;
 
-      // TRAFFIC COP: Route move to correct engine
       if (match.gameType === 'WHOT') {
         gameResult = this.whotService.playCard(payload.matchId, client.data.userId, payload.cardId, payload.requestedShape as any);
       } else if (match.gameType === 'UNO') {
@@ -176,7 +182,6 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
 
       let gameResult: any;
 
-      // TRAFFIC COP: Route draw request to correct engine
       if (match.gameType === 'WHOT') {
         gameResult = this.whotService.drawMarket(payload.matchId, client.data.userId, 1);
       } else if (match.gameType === 'UNO') {
@@ -195,6 +200,44 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
       const player = game.players.find((p: any) => p.userId === client.data.userId);
       if (player) {
         client.emit('receive_cards', { hand: player.hand });
+      }
+    } catch (e) {
+      const error = e as any;
+      client.emit('error', { message: error.message });
+    }
+  }
+
+  @SubscribeMessage('roll_dice')
+  async handleRollDice(@ConnectedSocket() client: Socket, @MessageBody() payload: { matchId: string }) {
+    try {
+      const { game, roll, skipped } = this.ludoService.rollDice(payload.matchId, client.data.userId);
+
+      this.server.to(payload.matchId).emit('dice_rolled', {
+        userId: client.data.userId,
+        roll,
+        skipped,
+        currentTurnUserId: game.currentTurnUserId
+      });
+    } catch (e) {
+      const error = e as any;
+      client.emit('error', { message: error.message });
+    }
+  }
+
+  @SubscribeMessage('move_token')
+  async handleMoveToken(@ConnectedSocket() client: Socket, @MessageBody() payload: { matchId: string, tokenId: number }) {
+    try {
+      const { game, winnerId } = this.ludoService.moveToken(payload.matchId, client.data.userId, payload.tokenId);
+
+      if (winnerId) {
+        const result = await this.multiplayerService.settleGame(payload.matchId, winnerId);
+        this.server.to(payload.matchId).emit('game_over', { winnerId, prize: result.winnerPrize });
+      } else {
+        this.server.to(payload.matchId).emit('ludo_state_update', {
+          players: game.players,
+          currentTurnUserId: game.currentTurnUserId,
+          hasRolled: game.hasRolled
+        });
       }
     } catch (e) {
       const error = e as any;
