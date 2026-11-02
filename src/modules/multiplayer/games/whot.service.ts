@@ -49,7 +49,6 @@ export class WhotService {
         return array;
     }
 
-    // 2. INITIALIZE THE GAME AND DEAL CARDS
     initializeGame(matchId: string, userIds: string[]): WhotGameState {
         const deck = this.generateDeck();
         const players = [];
@@ -63,14 +62,14 @@ export class WhotService {
         if (firstCardIndex === -1) firstCardIndex = 0;
 
         const firstCard = deck.splice(firstCardIndex, 1)[0];
-        if (!firstCard) throw new Error('Deck generation failed'); // <-- TS FIX
+        if (!firstCard) throw new Error('Deck generation failed');
 
         const gameState: WhotGameState = {
             matchId,
             players,
             market: deck,
             playedCards: [firstCard],
-            currentTurnUserId: userIds[0],
+            currentTurnUserId: userIds[0]!,
             activeShape: firstCard.shape,
         };
 
@@ -78,7 +77,10 @@ export class WhotService {
         return gameState;
     }
 
-    // 3. DRAW FROM MARKET
+    getGameState(matchId: string) {
+        return this.activeGames.get(matchId);
+    }
+
     drawMarket(matchId: string, userId: string, count: number = 1) {
         const game = this.activeGames.get(matchId);
         if (!game || game.currentTurnUserId !== userId) throw new Error('Not your turn');
@@ -88,7 +90,7 @@ export class WhotService {
 
         if (game.market.length < count) {
             const topCard = game.playedCards.pop();
-            if (!topCard) throw new Error('Played cards pile is empty'); // <-- TS FIX
+            if (!topCard) throw new Error('Played cards pile is empty');
 
             game.market.push(...this.shuffle(game.playedCards));
             game.playedCards = [topCard];
@@ -106,13 +108,13 @@ export class WhotService {
         if (!game || game.currentTurnUserId !== userId) throw new Error('Not your turn');
 
         const player = game.players.find(p => p.userId === userId);
-        if (!player) throw new Error('Player not found'); // <-- THIS FIXES THE ERROR!
+        if (!player) throw new Error('Player not found');
 
         const cardIndex = player.hand.findIndex(c => c.id === cardId);
         if (cardIndex === -1) throw new Error('You do not own this card');
 
-        const card = player.hand[cardIndex];
-        const topCard = game.playedCards[game.playedCards.length - 1];
+        const card = player.hand[cardIndex]!;
+        const topCard = game.playedCards[game.playedCards.length - 1]!;
 
         if (card.number !== 20 && card.shape !== game.activeShape && card.number !== topCard.number) {
             throw new Error('Invalid move. Must match shape or number.');
@@ -131,7 +133,6 @@ export class WhotService {
         }
 
         if (card.number === 1) {
-            // Hold on
         } else if (card.number === 2) {
             const nextPlayer = this.getNextPlayer(game);
             this.drawMarket(matchId, nextPlayer.userId, 2);
@@ -156,7 +157,7 @@ export class WhotService {
     private getNextPlayer(game: WhotGameState) {
         const currentIndex = game.players.findIndex(p => p.userId === game.currentTurnUserId);
         const nextIndex = (currentIndex + 1) % game.players.length;
-        return game.players[nextIndex];
+        return game.players[nextIndex]!;
     }
 
     private nextTurn(game: WhotGameState) {

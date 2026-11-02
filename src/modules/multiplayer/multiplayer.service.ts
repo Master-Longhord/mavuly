@@ -47,7 +47,7 @@ export class MultiplayerService {
         return this.prisma.$transaction(async (tx) => {
             const match = await tx.multiplayerMatch.findUnique({
                 where: { roomCode },
-                include: { participants: true }
+                include: { participants: { include: { user: { select: { name: true } } } } }
             });
 
             if (!match) throw new NotFoundException('Room not found');
@@ -71,17 +71,77 @@ export class MultiplayerService {
                 data: { coinBalance: { decrement: match.stakeAmount } }
             });
 
-            const updatedMatch = await tx.multiplayerMatch.update({
+            return tx.multiplayerMatch.update({
                 where: { id: match.id },
-                data: { prizePool: { increment: match.stakeAmount } },
+                data: {
+                    prizePool: { increment: match.stakeAmount },
+                    participants: { create: [{ userId }] }
+                },
                 include: { participants: { include: { user: { select: { name: true } } } } }
             });
+        });
+    }
 
-            await tx.matchParticipant.create({
-                data: { matchId: match.id, userId }
+    async quickMatch(userId: string, gameType: GameType, stakeAmount: number, maxPlayers: number) {
+        const openRooms = await this.prisma.multiplayerMatch.findMany({
+            where: { gameType, stakeAmount, maxPlayers, status: MatchStatus.WAITING_OPPONENT },
+            include: { participants: true },
+            orderBy: { createdAt: 'asc' }
+        });
+
+        const availableRoom = openRooms.find(
+            r => r.participants.length < r.maxPlayers && !r.participants.some(p => p.userId === userId)
+        );
+
+        if (availableRoom) {
+            return { match: await this.joinRoom(userId, availableRoom.roomCode), isNew: false };
+        } else {
+            return { match: await this.createPrivateRoom(userId, gameType, stakeAmount, maxPlayers), isNew: true };
+        }
+    }
+
+    async leaveLobbyAndRefund(userId: string, matchId: string) {
+        return this.prisma.$transaction(async (tx) => {
+            const match = await tx.multiplayerMatch.findUnique({
+                where: { id: matchId },
+                include: { participants: true }
             });
 
-            return updatedMatch;
+            if (!match) throw new NotFoundException('Match not found');
+            if (match.status !== MatchStatus.WAITING_OPPONENT) {
+                throw new BadRequestException('Cannot leave and refund after game has started');
+            }
+
+            if (match.hostId === userId) {
+                for (const p of match.participants) {
+                    await tx.user.update({
+                        where: { id: p.userId },
+                        data: { coinBalance: { increment: match.stakeAmount } }
+                    });
+                }
+                await tx.multiplayerMatch.update({
+                    where: { id: matchId },
+                    data: { status: MatchStatus.EXPIRED_REFUNDED, prizePool: 0 }
+                });
+                return { cancelled: true, message: 'Host left. Room closed and all players refunded.' };
+            } else {
+                const isParticipant = match.participants.some(p => p.userId === userId);
+                if (!isParticipant) throw new BadRequestException('Not in this room');
+
+                await tx.matchParticipant.delete({
+                    where: { matchId_userId: { matchId, userId } }
+                });
+                await tx.user.update({
+                    where: { id: userId },
+                    data: { coinBalance: { increment: match.stakeAmount } }
+                });
+                const updatedMatch = await tx.multiplayerMatch.update({
+                    where: { id: matchId },
+                    data: { prizePool: { decrement: match.stakeAmount } },
+                    include: { participants: { include: { user: { select: { name: true } } } } }
+                });
+                return { cancelled: false, match: updatedMatch };
+            }
         });
     }
 
@@ -123,7 +183,7 @@ export class MultiplayerService {
                     amount: winnerPrize,
                     type: 'PVP_WIN',
                     status: 'COMPLETED',
-                    reference: `WHOT-WIN-${roomId}`,
+                    reference: `MULTI-WIN-${roomId}`,
                 }
             });
 

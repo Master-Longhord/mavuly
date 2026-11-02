@@ -5,12 +5,13 @@ import { ConfigService } from '@nestjs/config';
 import * as argon2 from 'argon2';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
-
+import axios from 'axios';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
+import { GoogleAuthDto } from './dto/google-auth.dto';
 
 @Injectable()
 export class AuthService {
@@ -96,6 +97,61 @@ export class AuthService {
         }
 
         return this.generateTokens(user);
+    }
+
+    async googleLogin(dto: GoogleAuthDto) {
+        try {
+            const response = await axios.get(`https://oauth2.googleapis.com/tokeninfo?id_token=${dto.idToken}`);
+            const { email, name, email_verified } = response.data;
+
+            if (!email || email_verified !== 'true') {
+                throw new UnauthorizedException('Google account email is not verified');
+            }
+
+            let user = await this.prisma.user.findUnique({ where: { email } });
+
+            if (!user) {
+                const randomPassword = await argon2.hash(crypto.randomBytes(32).toString('hex'));
+                const baseName = (name || email).substring(0, 3).toUpperCase().replace(/[^A-Z]/g, 'USR');
+                const newReferralCode = `${baseName}${Math.floor(1000 + Math.random() * 9000)}`;
+
+                let referredById = null;
+                if (dto.referredByCode) {
+                    const referrer = await this.prisma.user.findUnique({ where: { referralCode: dto.referredByCode } });
+                    if (referrer) referredById = referrer.id;
+                }
+
+                user = await this.prisma.user.create({
+                    data: {
+                        email,
+                        name: name || email.split('@')[0],
+                        passwordHash: randomPassword,
+                        accountType: dto.accountType || 'TESTER',
+                        isEmailVerified: true,
+                        referralCode: newReferralCode,
+                        referredById,
+                    }
+                });
+
+                if (referredById) {
+                    await this.prisma.user.update({ where: { id: referredById }, data: { coinBalance: { increment: 100 } } });
+                    await this.prisma.transaction.create({
+                        data: {
+                            userId: referredById,
+                            amount: 100,
+                            type: 'REFERRAL_BONUS',
+                            status: 'COMPLETED',
+                            reference: `REF-${user.id}`,
+                            description: `Referral bonus for inviting ${user.name}`
+                        }
+                    });
+                }
+            }
+
+            return this.generateTokens(user);
+        } catch (e) {
+            throw new UnauthorizedException('Invalid Google token');
+        }
     }
 
     // --- TOKEN MANAGEMENT (JWT & REFRESH) ---

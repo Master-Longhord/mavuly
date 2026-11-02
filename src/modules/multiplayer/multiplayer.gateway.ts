@@ -9,6 +9,7 @@ import { MultiplayerService } from './multiplayer.service';
 import { WhotService } from './games/whot.service';
 import { UnoService } from './games/uno.service';
 import { LudoService } from './games/ludo.service';
+import { MonopolyService } from './games/monopoly.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { GameType } from '@prisma/client';
 
@@ -26,6 +27,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
     private whotService: WhotService,
     private unoService: UnoService,
     private ludoService: LudoService,
+    private monopolyService: MonopolyService,
     private prisma: PrismaService
   ) { }
 
@@ -85,6 +87,71 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
     }
   }
 
+  @SubscribeMessage('quick_match')
+  async handleQuickMatch(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: { gameType: GameType, stakeAmount: number, maxPlayers: number }
+  ) {
+    try {
+      const { match, isNew } = await this.multiplayerService.quickMatch(
+        client.data.userId, payload.gameType, payload.stakeAmount, payload.maxPlayers
+      );
+      client.join(match.id);
+      if (isNew) {
+        client.emit('room_created', { match });
+      } else {
+        this.server.to(match.id).emit('player_joined', { match });
+      }
+    } catch (e) {
+      const error = e as any;
+      client.emit('error', { message: error.message });
+    }
+  }
+
+  @SubscribeMessage('leave_room')
+  async handleLeaveRoom(@ConnectedSocket() client: Socket, @MessageBody() payload: { matchId: string }) {
+    try {
+      const result = await this.multiplayerService.leaveLobbyAndRefund(client.data.userId, payload.matchId);
+      client.leave(payload.matchId);
+      if (result.cancelled) {
+        this.server.to(payload.matchId).emit('room_cancelled', { message: result.message });
+      } else {
+        this.server.to(payload.matchId).emit('player_left', { match: result.match });
+      }
+    } catch (e) {
+      const error = e as any;
+      client.emit('error', { message: error.message });
+    }
+  }
+
+  @SubscribeMessage('reconnect_match')
+  async handleReconnect(@ConnectedSocket() client: Socket, @MessageBody() payload: { matchId: string }) {
+    try {
+      const match = await this.prisma.multiplayerMatch.findUnique({ where: { id: payload.matchId } });
+      if (!match) throw new Error('Match not found');
+
+      client.join(payload.matchId);
+
+      let gameState: any;
+      if (match.gameType === 'WHOT') gameState = this.whotService.getGameState(payload.matchId);
+      else if (match.gameType === 'UNO') gameState = this.unoService.getGameState(payload.matchId);
+      else if (match.gameType === 'LUDO') gameState = this.ludoService.getGameState(payload.matchId);
+      else if (match.gameType === 'MONOPOLY') gameState = this.monopolyService.getGameState(payload.matchId);
+
+      if (!gameState) throw new Error('Active game state not found');
+
+      client.emit('resync_state', { matchId: payload.matchId, gameType: match.gameType, gameState });
+
+      if (match.gameType === 'WHOT' || match.gameType === 'UNO') {
+        const player = gameState.players.find((p: any) => p.userId === client.data.userId);
+        if (player) client.emit('receive_cards', { hand: player.hand });
+      }
+    } catch (e) {
+      const error = e as any;
+      client.emit('error', { message: error.message });
+    }
+  }
+
   @SubscribeMessage('start_game')
   async handleStartGame(
     @ConnectedSocket() client: Socket,
@@ -102,11 +169,13 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
         gameState = this.unoService.initializeGame(payload.matchId, userIds);
       } else if (match.gameType === 'LUDO') {
         gameState = this.ludoService.initializeGame(payload.matchId, userIds);
+      } else if (match.gameType === 'MONOPOLY') {
+        gameState = this.monopolyService.initializeGame(payload.matchId, userIds);
       } else {
         throw new Error('Game logic not implemented for this GameType yet.');
       }
 
-      if (match.gameType === 'LUDO') {
+      if (match.gameType === 'LUDO' || match.gameType === 'MONOPOLY') {
         this.server.to(payload.matchId).emit('game_started', {
           matchId: payload.matchId,
           currentTurnUserId: gameState.currentTurnUserId,
@@ -210,14 +279,27 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
   @SubscribeMessage('roll_dice')
   async handleRollDice(@ConnectedSocket() client: Socket, @MessageBody() payload: { matchId: string }) {
     try {
-      const { game, roll, skipped } = this.ludoService.rollDice(payload.matchId, client.data.userId);
+      const match = await this.prisma.multiplayerMatch.findUnique({ where: { id: payload.matchId } });
+      if (!match) throw new Error('Match not found');
 
-      this.server.to(payload.matchId).emit('dice_rolled', {
-        userId: client.data.userId,
-        roll,
-        skipped,
-        currentTurnUserId: game.currentTurnUserId
-      });
+      if (match.gameType === 'LUDO') {
+        const { game, roll, skipped, movableTokenIds } = this.ludoService.rollDice(payload.matchId, client.data.userId);
+        this.server.to(payload.matchId).emit('dice_rolled', {
+          userId: client.data.userId,
+          roll,
+          skipped,
+          movableTokenIds,
+          currentTurnUserId: game.currentTurnUserId
+        });
+      } else if (match.gameType === 'MONOPOLY') {
+        const { game, winnerId } = this.monopolyService.rollDice(payload.matchId, client.data.userId);
+        if (winnerId) {
+          const result = await this.multiplayerService.settleGame(payload.matchId, winnerId);
+          this.server.to(payload.matchId).emit('game_over', { winnerId, prize: result.winnerPrize });
+        } else {
+          this.server.to(payload.matchId).emit('monopoly_state_update', { gameState: game });
+        }
+      }
     } catch (e) {
       const error = e as any;
       client.emit('error', { message: error.message });
@@ -239,6 +321,28 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
           hasRolled: game.hasRolled
         });
       }
+    } catch (e) {
+      const error = e as any;
+      client.emit('error', { message: error.message });
+    }
+  }
+
+  @SubscribeMessage('buy_property')
+  async handleBuyProperty(@ConnectedSocket() client: Socket, @MessageBody() payload: { matchId: string }) {
+    try {
+      const { game } = this.monopolyService.buyProperty(payload.matchId, client.data.userId);
+      this.server.to(payload.matchId).emit('monopoly_state_update', { gameState: game });
+    } catch (e) {
+      const error = e as any;
+      client.emit('error', { message: error.message });
+    }
+  }
+
+  @SubscribeMessage('end_turn')
+  async handleEndTurn(@ConnectedSocket() client: Socket, @MessageBody() payload: { matchId: string }) {
+    try {
+      const { game } = this.monopolyService.endTurn(payload.matchId, client.data.userId);
+      this.server.to(payload.matchId).emit('monopoly_state_update', { gameState: game });
     } catch (e) {
       const error = e as any;
       client.emit('error', { message: error.message });
