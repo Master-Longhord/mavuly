@@ -16,7 +16,7 @@ export interface UnoGameState {
     playedCards: UnoCard[];
     currentTurnUserId: string;
     activeColor: UnoColor;
-    playDirection: 1 | -1; // 1 for clockwise, -1 for counter-clockwise
+    playDirection: 1 | -1;
 }
 
 @Injectable()
@@ -57,9 +57,8 @@ export class UnoService {
 
     initializeGame(matchId: string, userIds: string[]): UnoGameState {
         const deck = this.generateDeck();
-        const players = userIds.map(userId => ({ userId, hand: deck.splice(0, 7) })); // Deal 7 cards
+        const players = userIds.map(userId => ({ userId, hand: deck.splice(0, 7) }));
 
-        // First card cannot be a WILD for simplicity
         let firstIndex = deck.findIndex(c => c.color !== 'WILD' && !['SKIP', 'REVERSE', 'DRAW_TWO'].includes(c.type));
         if (firstIndex === -1) firstIndex = 0;
         const firstCard = deck.splice(firstIndex, 1)[0];
@@ -67,11 +66,15 @@ export class UnoService {
 
         const gameState: UnoGameState = {
             matchId, players, market: deck, playedCards: [firstCard],
-            currentTurnUserId: userIds[0], activeColor: firstCard.color, playDirection: 1,
+            currentTurnUserId: userIds[0]!, activeColor: firstCard.color, playDirection: 1,
         };
 
         this.activeGames.set(matchId, gameState);
         return gameState;
+    }
+
+    getGameState(matchId: string) {
+        return this.activeGames.get(matchId);
     }
 
     drawMarket(matchId: string, userId: string, count: number = 1) {
@@ -83,8 +86,9 @@ export class UnoService {
 
         if (game.market.length < count) {
             const topCard = game.playedCards.pop();
+            if (!topCard) throw new Error('Played cards pile is empty');
             game.market.push(...this.shuffle(game.playedCards));
-            game.playedCards = [topCard!];
+            game.playedCards = [topCard];
         }
 
         player.hand.push(...game.market.splice(0, count));
@@ -102,10 +106,9 @@ export class UnoService {
         const cardIndex = player.hand.findIndex(c => c.id === cardId);
         if (cardIndex === -1) throw new Error('You do not own this card');
 
-        const card = player.hand[cardIndex];
-        const topCard = game.playedCards[game.playedCards.length - 1];
+        const card = player.hand[cardIndex]!;
+        const topCard = game.playedCards[game.playedCards.length - 1]!;
 
-        // VALIDATION: Must match Color, Type, or be a Wild Card
         if (card.color !== 'WILD' && card.color !== game.activeColor && card.type !== topCard.type) {
             throw new Error('Invalid move. Must match color or number/symbol.');
         }
@@ -117,22 +120,21 @@ export class UnoService {
         game.playedCards.push(card);
         game.activeColor = card.color === 'WILD' ? requestedColor! : card.color;
 
-        if (player.hand.length === 0) return { game, winnerId: userId }; // WINNER!
+        if (player.hand.length === 0) return { game, winnerId: userId };
 
-        // ACTION CARDS
         if (card.type === 'REVERSE') {
             game.playDirection = (game.playDirection * -1) as 1 | -1;
-            if (game.players.length === 2) this.nextTurn(game); // In 2-player, Reverse acts like a Skip
+            if (game.players.length === 2) this.nextTurn(game);
         } else if (card.type === 'SKIP') {
             this.nextTurn(game);
         } else if (card.type === 'DRAW_TWO') {
             const nextPlayer = this.getNextPlayer(game);
             this.forceDraw(game, nextPlayer.userId, 2);
-            this.nextTurn(game); // Skip their turn
+            this.nextTurn(game);
         } else if (card.type === 'WILD_DRAW_FOUR') {
             const nextPlayer = this.getNextPlayer(game);
             this.forceDraw(game, nextPlayer.userId, 4);
-            this.nextTurn(game); // Skip their turn
+            this.nextTurn(game);
         }
 
         this.nextTurn(game);
@@ -143,8 +145,9 @@ export class UnoService {
         const player = game.players.find(p => p.userId === userId);
         if (game.market.length < count) {
             const topCard = game.playedCards.pop();
+            if (!topCard) throw new Error('Played cards pile is empty');
             game.market.push(...this.shuffle(game.playedCards));
-            game.playedCards = [topCard!];
+            game.playedCards = [topCard];
         }
         player!.hand.push(...game.market.splice(0, count));
     }
@@ -153,7 +156,7 @@ export class UnoService {
         const currentIndex = game.players.findIndex(p => p.userId === game.currentTurnUserId);
         let nextIndex = (currentIndex + game.playDirection) % game.players.length;
         if (nextIndex < 0) nextIndex += game.players.length;
-        return game.players[nextIndex];
+        return game.players[nextIndex]!;
     }
 
     private nextTurn(game: UnoGameState) {
