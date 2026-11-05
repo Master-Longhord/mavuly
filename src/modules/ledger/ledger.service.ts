@@ -241,4 +241,99 @@ export class LedgerService {
             orderBy: { createdAt: 'desc' }
         });
     }
+
+    async getDeveloperBilling(developerId: string) {
+        const user = await this.prisma.user.findUnique({ where: { id: developerId } });
+        if (!user) throw new NotFoundException('Developer not found');
+
+        const campaigns = await this.prisma.campaign.findMany({
+            where: { developerId },
+            orderBy: { createdAt: 'desc' }
+        });
+
+        const history = await this.prisma.escrowTransaction.findMany({
+            where: { developerId },
+            orderBy: { createdAt: 'desc' }
+        });
+
+        const campaignRows = campaigns.map(c => {
+            const rewards = Number(c.totalBudget);
+            const fee = Number((rewards * Number(c.platformFeePercent)).toFixed(2));
+            return {
+                id: c.id,
+                title: c.title,
+                status: c.status.toLowerCase(),
+                rewards,
+                fee,
+                total: Number((rewards + fee).toFixed(2))
+            };
+        });
+
+        const historyRows = history.map(h => ({
+            id: h.id,
+            date: h.createdAt,
+            type: h.type.toLowerCase(),
+            description: `${h.type} (${h.reference})`,
+            amount: Number(h.amount),
+            status: h.status.toLowerCase()
+        }));
+
+        return {
+            escrowBalance: Number(user.escrowBalance),
+            campaigns: campaignRows,
+            history: historyRows
+        };
+    }
+
+    async initializeDepositCheckout(developerId: string, amount: number, redirectUrl?: string) {
+        if (!amount || amount <= 0) throw new BadRequestException('Amount must be greater than 0');
+
+        const user = await this.prisma.user.findUnique({ where: { id: developerId } });
+        if (!user) throw new NotFoundException('Developer not found');
+
+        const txRef = `ESC-DEP-${Date.now()}-${uuidv4().substring(0, 8)}`;
+        const secretKey = this.configService.get<string>('FLUTTERWAVE_SECRET_KEY');
+
+        await this.prisma.escrowTransaction.create({
+            data: {
+                developerId,
+                amount,
+                type: 'DEPOSIT',
+                status: 'PENDING',
+                reference: txRef,
+            }
+        });
+
+        try {
+            const response = await axios.post(
+                `${this.FLW_BASE_URL}/payments`,
+                {
+                    tx_ref: txRef,
+                    amount,
+                    currency: 'USD',
+                    redirect_url: redirectUrl || 'https://mavuly.com/developer/billing',
+                    customer: {
+                        email: user.email,
+                        name: user.studioName || user.name || 'Mavuly Developer'
+                    },
+                    customizations: {
+                        title: 'Mavuly Escrow Deposit',
+                        description: 'Fund developer escrow wallet'
+                    }
+                },
+                { headers: { Authorization: `Bearer ${secretKey}`, 'Content-Type': 'application/json' } }
+            );
+
+            return {
+                checkoutUrl: response.data?.data?.link,
+                txRef,
+                escrowBalance: Number(user.escrowBalance)
+            };
+        } catch (e) {
+            const error = e as any;
+            throw new InternalServerErrorException(
+                `Could not initialize payment link: ${error.response?.data?.message || error.message}`
+            );
+        }
+    }
 }

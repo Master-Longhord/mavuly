@@ -39,4 +39,10 @@ export class CampaignsController {
     getCampaignById(@Param('id') campaignId: string) {
         return this.campaignsService.getCampaignById(campaignId);
     }
+
+    @Roles(AccountType.DEVELOPER)
+    @Get('analytics')
+    getAnalytics(@CurrentUser('id') developerId: string) {
+        return this.campaignsService.getDeveloperAnalytics(developerId);
+    }
 }

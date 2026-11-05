@@ -131,4 +131,74 @@ export class CampaignsService {
         const { targetUrl, ...safeCampaign } = campaign;
         return safeCampaign;
     }
+
+    async getDeveloperAnalytics(developerId: string) {
+        const campaigns = await this.prisma.campaign.findMany({
+            where: { developerId },
+            include: {
+                submissions: {
+                    select: { status: true, startedAt: true, verifiedAt: true }
+                }
+            },
+            orderBy: { createdAt: 'desc' }
+        });
+
+        let tasksStarted = 0;
+        let totalConversions = 0;
+        let totalSpend = 0;
+
+        const campaignRows = campaigns.map(c => {
+            const started = c.submissions.length;
+            const approved = c.submissions.filter(s => s.status === 'APPROVED').length;
+            const rate = started > 0 ? Math.round((approved / started) * 100) : 0;
+            const spend = approved * Number(c.rewardPerTask) * (1 + Number(c.platformFeePercent));
+
+            tasksStarted += started;
+            totalConversions += approved;
+            totalSpend += spend;
+
+            return {
+                id: c.id,
+                title: c.title,
+                convCount: approved,
+                rate,
+                spend: Number(spend.toFixed(2))
+            };
+        });
+
+        const conversionRate = tasksStarted > 0 ? Math.round((totalConversions / tasksStarted) * 100) : 0;
+
+        const graph = [];
+        for (let i = 13; i >= 0; i--) {
+            const d = new Date();
+            d.setUTCHours(0, 0, 0, 0);
+            d.setUTCDate(d.getUTCDate() - i);
+            const dayStr = d.toISOString().slice(0, 10);
+
+            let engagements = 0;
+            let conversions = 0;
+
+            for (const c of campaigns) {
+                for (const s of c.submissions) {
+                    if (s.startedAt.toISOString().slice(0, 10) === dayStr) engagements++;
+                    if (s.status === 'APPROVED' && s.verifiedAt && s.verifiedAt.toISOString().slice(0, 10) === dayStr) {
+                        conversions++;
+                    }
+                }
+            }
+
+            graph.push({ day: dayStr, conversions, engagements });
+        }
+
+        return {
+            totals: {
+                totalConversions,
+                tasksStarted,
+                conversionRate,
+                totalSpend: Number(totalSpend.toFixed(2))
+            },
+            graph,
+            campaigns: campaignRows
+        };
+    }
 }

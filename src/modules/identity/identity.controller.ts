@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import { IdentityService } from './identity.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UpdateProfileDto } from './dto/update-profile.dto';
@@ -100,5 +100,11 @@ export class IdentityController {
     @Post('ad-refill')
     claimAdRefill(@CurrentUser('id') userId: string) {
         return this.identityService.claimAdRefill(userId);
+    }
+
+    @Roles('DEVELOPER')
+    @Get('apps/:id')
+    getDeveloperAppById(@CurrentUser('id') userId: string, @Param('id') appId: string) {
+        return this.identityService.getDeveloperAppById(userId, appId);
     }
 }

@@ -63,18 +63,27 @@ export class VerificationService {
                 },
             });
 
+            const isDeveloper = user.accountType === 'DEVELOPER';
+
             await tx.user.update({
                 where: { id: userId },
                 data: {
                     kycStatus: KycStatus.VERIFIED,
-                    legalName: resolved.accountName
+                    legalName: resolved.accountName,
+                    bankName: dto.bankName,
+                    accountNumber: resolved.accountNumber,
+                    accountName: resolved.accountName,
+                    withdrawalVerified: true,
+                    developerVerified: isDeveloper ? true : user.developerVerified,
                 },
             });
 
             return {
                 message: 'Bank account verified and linked successfully!',
                 accountName: bankRecord.accountName,
-                kycStatus: KycStatus.VERIFIED
+                kycStatus: KycStatus.VERIFIED,
+                developerVerified: isDeveloper ? true : user.developerVerified,
+                withdrawalVerified: true,
             };
         });
     }

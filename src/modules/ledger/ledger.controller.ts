@@ -42,4 +42,19 @@ export class LedgerController {
     convertCoins(@CurrentUser('id') userId: string, @Body('coins') coins: number) {
         return this.ledgerService.convertCoinsToDollars(userId, coins);
     }
+
+    @Roles(AccountType.DEVELOPER)
+    @Get('billing')
+    getDeveloperBilling(@CurrentUser('id') developerId: string) {
+        return this.ledgerService.getDeveloperBilling(developerId);
+    }
+
+    @Roles(AccountType.DEVELOPER)
+    @Post('deposit')
+    initializeDeposit(
+        @CurrentUser('id') developerId: string,
+        @Body() dto: { amount: number; redirectUrl?: string }
+    ) {
+        return this.ledgerService.initializeDepositCheckout(developerId, dto.amount, dto.redirectUrl);
+    }
 }
