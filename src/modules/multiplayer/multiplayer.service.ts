@@ -11,7 +11,18 @@ export class MultiplayerService {
         return crypto.randomBytes(3).toString('hex').toUpperCase();
     }
 
+    async getRoomInfo(roomCode: string) {
+        const match = await this.prisma.multiplayerMatch.findUnique({
+            where: { roomCode: roomCode.toUpperCase() },
+            include: { participants: { include: { user: { select: { name: true } } } } }
+        });
+        if (!match) throw new NotFoundException('Room not found');
+        return match;
+    }
+
     async createPrivateRoom(userId: string, gameType: GameType, stakeAmount: number, maxPlayers: number) {
+        if (stakeAmount < 10) throw new BadRequestException('Minimum stake is 10 coins');
+
         return this.prisma.$transaction(async (tx) => {
             const user = await tx.user.findUnique({ where: { id: userId } });
             if (!user || user.coinBalance < stakeAmount) {
@@ -43,14 +54,17 @@ export class MultiplayerService {
         });
     }
 
-    async joinRoom(userId: string, roomCode: string) {
+    async joinRoom(userId: string, roomCode: string, expectedStake?: number) {
         return this.prisma.$transaction(async (tx) => {
             const match = await tx.multiplayerMatch.findUnique({
-                where: { roomCode },
+                where: { roomCode: roomCode.toUpperCase() },
                 include: { participants: { include: { user: { select: { name: true } } } } }
             });
 
             if (!match) throw new NotFoundException('Room not found');
+            if (expectedStake !== undefined && match.stakeAmount !== expectedStake) {
+                throw new BadRequestException(`Stake mismatch. Room stake is ${match.stakeAmount} coins.`);
+            }
             if (match.status !== MatchStatus.WAITING_OPPONENT) {
                 throw new BadRequestException('Game has already started or is closed');
             }
@@ -83,8 +97,15 @@ export class MultiplayerService {
     }
 
     async quickMatch(userId: string, gameType: GameType, stakeAmount: number, maxPlayers: number) {
+        const tenMinsAgo = new Date(Date.now() - 10 * 60 * 1000);
         const openRooms = await this.prisma.multiplayerMatch.findMany({
-            where: { gameType, stakeAmount, maxPlayers, status: MatchStatus.WAITING_OPPONENT },
+            where: {
+                gameType,
+                stakeAmount,
+                maxPlayers,
+                status: MatchStatus.WAITING_OPPONENT,
+                createdAt: { gte: tenMinsAgo }
+            },
             include: { participants: true },
             orderBy: { createdAt: 'asc' }
         });
@@ -94,7 +115,7 @@ export class MultiplayerService {
         );
 
         if (availableRoom) {
-            return { match: await this.joinRoom(userId, availableRoom.roomCode), isNew: false };
+            return { match: await this.joinRoom(userId, availableRoom.roomCode, stakeAmount), isNew: false };
         } else {
             return { match: await this.createPrivateRoom(userId, gameType, stakeAmount, maxPlayers), isNew: true };
         }
@@ -108,8 +129,19 @@ export class MultiplayerService {
             });
 
             if (!match) throw new NotFoundException('Match not found');
+
+            if (match.status === MatchStatus.PLAYING) {
+                const remaining = match.participants.filter(p => p.userId !== userId);
+                if (remaining.length === 1) {
+                    const winnerId = remaining[0]!.userId;
+                    const result = await this.settleGame(matchId, winnerId);
+                    return { forfeited: true, winnerId, prize: result.winnerPrize };
+                }
+                throw new BadRequestException('Cannot leave an active game without forfeiting');
+            }
+
             if (match.status !== MatchStatus.WAITING_OPPONENT) {
-                throw new BadRequestException('Cannot leave and refund after game has started');
+                throw new BadRequestException('Room is already closed');
             }
 
             if (match.hostId === userId) {
@@ -163,6 +195,10 @@ export class MultiplayerService {
         return this.prisma.$transaction(async (tx) => {
             const match = await tx.multiplayerMatch.findUnique({ where: { id: roomId } });
             if (!match) throw new NotFoundException('Match not found');
+            if (match.status === MatchStatus.SETTLED) {
+                const existingPrize = match.prizePool - Math.floor(match.prizePool * 0.15);
+                return { winnerPrize: existingPrize };
+            }
 
             const platformRake = Math.floor(match.prizePool * 0.15);
             const winnerPrize = match.prizePool - platformRake;

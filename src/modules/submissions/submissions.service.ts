@@ -235,24 +235,27 @@ export class SubmissionsService {
     }
 
     async updateBugStatus(developerId: string, feedbackId: string, bugStatus: string, bugSeverity?: string) {
-        // 1. Find the feedback and check if the dev owns the campaign it belongs to
+        const allowedStatuses = ['open', 'in_progress', 'resolved', 'dismissed', 'fixed', 'critical'];
+        const normalizedStatus = bugStatus.toLowerCase();
+        if (!allowedStatuses.includes(normalizedStatus)) {
+            throw new BadRequestException(`Invalid bugStatus. Allowed: ${allowedStatuses.join(', ')}`);
+        }
+
         const feedback = await this.prisma.feedback.findUnique({
             where: { id: feedbackId },
             include: { submission: { include: { campaign: true } } }
         });
 
         if (!feedback) throw new NotFoundException('Feedback/Bug report not found');
-
         if (feedback.submission.campaign.developerId !== developerId) {
             throw new ForbiddenException('You do not own the campaign for this bug report');
         }
 
-        // 2. Update the status and severity
         return this.prisma.feedback.update({
             where: { id: feedbackId },
             data: {
-                bugStatus,
-                ...(bugSeverity && { bugSeverity })
+                bugStatus: normalizedStatus,
+                ...(bugSeverity && { bugSeverity: bugSeverity.toLowerCase() })
             }
         });
     }

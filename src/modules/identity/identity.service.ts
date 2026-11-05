@@ -27,6 +27,8 @@ export class IdentityService {
                 accountName: true,
                 withdrawalVerified: true,
                 developerVerified: true,
+                kycStatus: true,
+                bankAccount: true,
                 coinBalance: true,
                 escrowBalance: true,
                 createdAt: true,
@@ -110,7 +112,6 @@ export class IdentityService {
         });
     }
 
-    // --- WALLET BALANCES (Available, Pending, Lifetime) ---
     async getWalletBalances(userId: string) {
         const user = await this.prisma.user.findUnique({ where: { id: userId } });
         if (!user) throw new NotFoundException('User not found');
@@ -135,7 +136,6 @@ export class IdentityService {
         };
     }
 
-    // --- DAILY QUESTS DEFINITIONS ---
     private readonly QUEST_DEFS = {
         daily_debut: { id: 'daily_debut', title: 'Daily Debut', desc: 'Play 1 match of any game today.', field: 'matchesPlayedToday', target: 1, reward: 15 },
         math_sprint: { id: 'math_sprint', title: 'Math Sprint', desc: 'Complete 2 matches of Math Duel today.', field: 'mathMatchesToday', target: 2, reward: 25 },
@@ -222,7 +222,6 @@ export class IdentityService {
         });
     }
 
-    // --- REFERRAL DASHBOARD ---
     async getReferralStats(userId: string) {
         const user = await this.prisma.user.findUnique({
             where: { id: userId },
@@ -290,7 +289,6 @@ export class IdentityService {
                 businessDocUrl: dto.businessDocUrl || user.businessDocUrl,
                 idDocUrl: dto.idDocUrl || user.idDocUrl,
                 addressDocUrl: dto.addressDocUrl || user.addressDocUrl,
-                // Once they upload an ID, we mark them as Pending Review
                 kycStatus: 'PENDING'
             }
         });
@@ -298,25 +296,67 @@ export class IdentityService {
         return { message: 'Documents uploaded successfully. Pending admin verification.' };
     }
 
-    // --- DEVELOPER APPS ("My Apps" Tab) ---
-    async registerDeveloperApp(developerId: string, dto: { name: string; type: string; version?: string; description?: string }) {
-        return this.prisma.developerApp.create({
+    async registerDeveloperApp(developerId: string, dto: { name: string; productType?: string; type?: string; version?: string; description?: string }) {
+        const dev = await this.prisma.user.findUnique({ where: { id: developerId } });
+        const app = await this.prisma.developerApp.create({
             data: {
                 developerId,
                 name: dto.name,
-                type: dto.type,
+                type: dto.productType || dto.type || 'App',
                 version: dto.version,
                 description: dto.description,
                 moderationStatus: 'PENDING',
             }
         });
+
+        return {
+            id: app.id,
+            name: app.name,
+            studioName: dev?.studioName || dev?.name || null,
+            productType: app.type.toLowerCase(),
+            version: app.version,
+            description: app.description,
+            moderationStatus: app.moderationStatus.toLowerCase(),
+            moderationNotes: app.moderationNotes
+        };
     }
 
     async getDeveloperApps(developerId: string) {
-        return this.prisma.developerApp.findMany({
+        const dev = await this.prisma.user.findUnique({ where: { id: developerId } });
+        const apps = await this.prisma.developerApp.findMany({
             where: { developerId },
             orderBy: { createdAt: 'desc' }
         });
+
+        return apps.map(app => ({
+            id: app.id,
+            name: app.name,
+            studioName: dev?.studioName || dev?.name || null,
+            productType: app.type.toLowerCase(),
+            version: app.version,
+            description: app.description,
+            moderationStatus: app.moderationStatus.toLowerCase(),
+            moderationNotes: app.moderationNotes
+        }));
+    }
+
+    async getDeveloperAppById(developerId: string, appId: string) {
+        const dev = await this.prisma.user.findUnique({ where: { id: developerId } });
+        const app = await this.prisma.developerApp.findFirst({
+            where: { id: appId, developerId }
+        });
+        if (!app) throw new NotFoundException('App not found');
+
+        return {
+            id: app.id,
+            name: app.name,
+            studioName: dev?.studioName || dev?.name || null,
+            productType: app.type.toLowerCase(),
+            version: app.version,
+            description: app.description,
+            moderationStatus: app.moderationStatus.toLowerCase(),
+            moderationNotes: app.moderationNotes
+        };
     }
 
     async generateApiKeys(userId: string) {
@@ -341,7 +381,6 @@ export class IdentityService {
         };
     }
 
-    // --- ADSTERRA AD REFILL ---
     async claimAdRefill(userId: string) {
         const REWARD = 25;
 

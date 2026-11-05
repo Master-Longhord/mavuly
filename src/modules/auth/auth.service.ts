@@ -53,6 +53,7 @@ export class AuthService {
                 accountType: dto.accountType,
                 name: dto.name,
                 phone: dto.phone,
+                coinBalance: 200,
                 emailVerifyToken: verificationCode,
                 isEmailVerified: false,
                 referralCode: newReferralCode,
@@ -60,22 +61,16 @@ export class AuthService {
             },
         });
 
-        if (referredById) {
-            await this.prisma.user.update({
-                where: { id: referredById },
-                data: { coinBalance: { increment: 100 } }
-            });
-            await this.prisma.transaction.create({
-                data: {
-                    userId: referredById,
-                    amount: 100,
-                    type: 'REFERRAL_BONUS',
-                    status: 'COMPLETED',
-                    reference: `REF-${user.id}`,
-                    description: `Referral bonus for inviting ${user.name}`
-                }
-            });
-        }
+        await this.prisma.transaction.create({
+            data: {
+                userId: user.id,
+                amount: 200,
+                type: 'REWARD',
+                status: 'COMPLETED',
+                reference: `WELCOME-${user.id}`,
+                description: 'Welcome bonus for joining Mavuly!'
+            }
+        });
 
         // Send the 6-digit verification code to their email!
         await this.mailService.sendVerificationEmail(user.email, verificationCode);

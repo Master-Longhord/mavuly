@@ -47,7 +47,7 @@ export class MonopolyService {
             { index: 9, name: 'Ikeja', type: 'PROPERTY', cost: 120, rent: 45, ownerId: null },
             { index: 10, name: 'Kirikiri Prison (Just Visiting)', type: 'JAIL' },
             { index: 11, name: 'Festac Town', type: 'PROPERTY', cost: 140, rent: 50, ownerId: null },
-            { index: 12, name: 'NEPA / PHCN', type: 'PROPERTY', cost: 150, rent: 60, ownerId: null },
+            { index: 12, name: 'Power Grid', type: 'PROPERTY', cost: 150, rent: 60, ownerId: null },
             { index: 13, name: 'Gbagada', type: 'PROPERTY', cost: 140, rent: 50, ownerId: null },
             { index: 14, name: 'Maryland', type: 'PROPERTY', cost: 160, rent: 60, ownerId: null },
             { index: 15, name: 'Nnamdi Azikiwe Airport', type: 'PROPERTY', cost: 200, rent: 75, ownerId: null },
@@ -123,12 +123,14 @@ export class MonopolyService {
         if (player.inJail) {
             if (d1 === d2) {
                 player.inJail = false;
-                game.turnLog = `Rolled doubles (${d1}, ${d2}) and escaped Kirikiri Prison!`;
+                game.turnLog = `Rolled doubles (${d1}, ${d2}) and escaped Kirikiri Prison! `;
             } else {
                 player.cash -= 50;
                 player.inJail = false;
-                game.turnLog = `Paid ₦50 bail to leave Kirikiri Prison.`;
+                game.turnLog = `Paid M$50 bail to leave Kirikiri Prison. `;
             }
+        } else {
+            game.turnLog = '';
         }
 
         const oldPos = player.position;
@@ -136,9 +138,7 @@ export class MonopolyService {
 
         if (player.position < oldPos && !player.inJail) {
             player.cash += 200;
-            game.turnLog = `Passed GO and collected ₦200! `;
-        } else {
-            game.turnLog = '';
+            game.turnLog += `Passed GO and collected M$200! `;
         }
 
         const space = game.board[player.position]!;
@@ -149,11 +149,11 @@ export class MonopolyService {
             game.turnLog += `Landed on Go To Jail! Sent straight to Kirikiri Prison.`;
         } else if (space.type === 'TAX') {
             player.cash -= (space.cost || 100);
-            game.turnLog += `Paid ₦${space.cost} in ${space.name}.`;
+            game.turnLog += `Paid M$${space.cost} in ${space.name}.`;
         } else if (space.type === 'CHANCE') {
             const luck = Math.random() > 0.5 ? 100 : -100;
             player.cash += luck;
-            game.turnLog += luck > 0 ? `Chance: Won ₦100 lottery!` : `Chance: Paid ₦100 LASTMA fine!`;
+            game.turnLog += luck > 0 ? `Chance: Won M$100 bonus!` : `Chance: Paid M$100 fine!`;
         } else if (space.type === 'PROPERTY') {
             if (space.ownerId && space.ownerId !== userId) {
                 const owner = game.players.find(p => p.userId === space.ownerId);
@@ -161,10 +161,10 @@ export class MonopolyService {
                     const rent = space.rent || 50;
                     player.cash -= rent;
                     owner.cash += rent;
-                    game.turnLog += `Landed on ${space.name} and paid ₦${rent} rent!`;
+                    game.turnLog += `Landed on ${space.name} and paid M$${rent} rent!`;
                 }
             } else if (!space.ownerId) {
-                game.turnLog += `Landed on ${space.name} (Available for ₦${space.cost}).`;
+                game.turnLog += `Landed on ${space.name} (Available for M$${space.cost}).`;
             }
         } else {
             game.turnLog += `Landed on ${space.name}.`;
@@ -189,7 +189,7 @@ export class MonopolyService {
 
         player.cash -= (space.cost || 0);
         space.ownerId = userId;
-        game.turnLog = `Purchased ${space.name} for ₦${space.cost}!`;
+        game.turnLog = `Purchased ${space.name} for M$${space.cost}!`;
 
         return { game };
     }

@@ -19,6 +19,8 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
   server: Server;
 
   private connectedUsers = new Map<string, string>();
+  private turnDeadlines = new Map<string, number>();
+  private rateLimits = new Map<string, { count: number; resetAt: number }>();
 
   constructor(
     private jwtService: JwtService,
@@ -30,6 +32,27 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
     private monopolyService: MonopolyService,
     private prisma: PrismaService
   ) { }
+
+  private checkRateLimit(client: Socket): boolean {
+    const now = Date.now();
+    const record = this.rateLimits.get(client.id);
+    if (!record || now > record.resetAt) {
+      this.rateLimits.set(client.id, { count: 1, resetAt: now + 1000 });
+      return true;
+    }
+    if (record.count >= 8) {
+      client.emit('error', { message: 'Too many actions. Please slow down.' });
+      return false;
+    }
+    record.count++;
+    return true;
+  }
+
+  private setTurnDeadline(matchId: string): number {
+    const deadline = Date.now() + 30000;
+    this.turnDeadlines.set(matchId, deadline);
+    return deadline;
+  }
 
   async handleConnection(client: Socket) {
     try {
@@ -53,6 +76,22 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
   handleDisconnect(client: Socket) {
     console.log(`🔴 Client disconnected: ${client.id}`);
     this.connectedUsers.delete(client.id);
+    this.rateLimits.delete(client.id);
+  }
+
+  @SubscribeMessage('room_info')
+  async handleRoomInfo(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: { roomCode: string }
+  ) {
+    if (!this.checkRateLimit(client)) return;
+    try {
+      const match = await this.multiplayerService.getRoomInfo(payload.roomCode);
+      client.emit('room_info_data', { match });
+    } catch (e) {
+      const error = e as any;
+      client.emit('error', { message: error.message });
+    }
   }
 
   @SubscribeMessage('create_room')
@@ -60,6 +99,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: { gameType: GameType, stakeAmount: number, maxPlayers: number }
   ) {
+    if (!this.checkRateLimit(client)) return;
     try {
       const match = await this.multiplayerService.createPrivateRoom(
         client.data.userId, payload.gameType, payload.stakeAmount, payload.maxPlayers
@@ -75,10 +115,11 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
   @SubscribeMessage('join_room')
   async handleJoinRoom(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: { roomCode: string }
+    @MessageBody() payload: { roomCode: string, expectedStake?: number }
   ) {
+    if (!this.checkRateLimit(client)) return;
     try {
-      const match = await this.multiplayerService.joinRoom(client.data.userId, payload.roomCode);
+      const match = await this.multiplayerService.joinRoom(client.data.userId, payload.roomCode, payload.expectedStake);
       client.join(match.id);
       this.server.to(match.id).emit('player_joined', { match });
     } catch (e) {
@@ -92,6 +133,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: { gameType: GameType, stakeAmount: number, maxPlayers: number }
   ) {
+    if (!this.checkRateLimit(client)) return;
     try {
       const { match, isNew } = await this.multiplayerService.quickMatch(
         client.data.userId, payload.gameType, payload.stakeAmount, payload.maxPlayers
@@ -110,10 +152,14 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
 
   @SubscribeMessage('leave_room')
   async handleLeaveRoom(@ConnectedSocket() client: Socket, @MessageBody() payload: { matchId: string }) {
+    if (!this.checkRateLimit(client)) return;
     try {
-      const result = await this.multiplayerService.leaveLobbyAndRefund(client.data.userId, payload.matchId);
+      const result: any = await this.multiplayerService.leaveLobbyAndRefund(client.data.userId, payload.matchId);
       client.leave(payload.matchId);
-      if (result.cancelled) {
+      if (result.forfeited) {
+        this.turnDeadlines.delete(payload.matchId);
+        this.server.to(payload.matchId).emit('game_over', { winnerId: result.winnerId, prize: result.prize, reason: 'opponent_forfeited' });
+      } else if (result.cancelled) {
         this.server.to(payload.matchId).emit('room_cancelled', { message: result.message });
       } else {
         this.server.to(payload.matchId).emit('player_left', { match: result.match });
@@ -124,8 +170,37 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
     }
   }
 
+  @SubscribeMessage('claim_afk_forfeit')
+  async handleClaimAfkForfeit(@ConnectedSocket() client: Socket, @MessageBody() payload: { matchId: string }) {
+    if (!this.checkRateLimit(client)) return;
+    try {
+      const deadline = this.turnDeadlines.get(payload.matchId);
+      if (!deadline || Date.now() < deadline) {
+        throw new Error('Turn timer has not expired yet');
+      }
+
+      const match = await this.prisma.multiplayerMatch.findUnique({
+        where: { id: payload.matchId },
+        include: { participants: true }
+      });
+      if (!match || match.status !== 'PLAYING') throw new Error('Match is not active');
+
+      this.turnDeadlines.delete(payload.matchId);
+      const result = await this.multiplayerService.settleGame(payload.matchId, client.data.userId);
+      this.server.to(payload.matchId).emit('game_over', {
+        winnerId: client.data.userId,
+        prize: result.winnerPrize,
+        reason: 'afk_forfeit'
+      });
+    } catch (e) {
+      const error = e as any;
+      client.emit('error', { message: error.message });
+    }
+  }
+
   @SubscribeMessage('reconnect_match')
   async handleReconnect(@ConnectedSocket() client: Socket, @MessageBody() payload: { matchId: string }) {
+    if (!this.checkRateLimit(client)) return;
     try {
       const match = await this.prisma.multiplayerMatch.findUnique({ where: { id: payload.matchId } });
       if (!match) throw new Error('Match not found');
@@ -140,7 +215,8 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
 
       if (!gameState) throw new Error('Active game state not found');
 
-      client.emit('resync_state', { matchId: payload.matchId, gameType: match.gameType, gameState });
+      const turnDeadline = this.turnDeadlines.get(payload.matchId) || null;
+      client.emit('resync_state', { matchId: payload.matchId, gameType: match.gameType, gameState, turnDeadline });
 
       if (match.gameType === 'WHOT' || match.gameType === 'UNO') {
         const player = gameState.players.find((p: any) => p.userId === client.data.userId);
@@ -157,6 +233,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: { matchId: string }
   ) {
+    if (!this.checkRateLimit(client)) return;
     try {
       const match = await this.multiplayerService.startGame(client.data.userId, payload.matchId);
       const userIds = (match as any).participants.map((p: any) => p.userId);
@@ -175,10 +252,13 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
         throw new Error('Game logic not implemented for this GameType yet.');
       }
 
+      const turnDeadline = this.setTurnDeadline(payload.matchId);
+
       if (match.gameType === 'LUDO' || match.gameType === 'MONOPOLY') {
         this.server.to(payload.matchId).emit('game_started', {
           matchId: payload.matchId,
           currentTurnUserId: gameState.currentTurnUserId,
+          turnDeadline,
           gameState
         });
       } else {
@@ -186,6 +266,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
         this.server.to(payload.matchId).emit('game_started', {
           matchId: payload.matchId,
           currentTurnUserId: gameState.currentTurnUserId,
+          turnDeadline,
           topCard,
           activeShape: gameState.activeShape || gameState.activeColor
         });
@@ -206,6 +287,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
 
   @SubscribeMessage('play_card')
   async handlePlayCard(@ConnectedSocket() client: Socket, @MessageBody() payload: { matchId: string, cardId: string, requestedShape?: string }) {
+    if (!this.checkRateLimit(client)) return;
     try {
       const match = await this.prisma.multiplayerMatch.findUnique({ where: { id: payload.matchId } });
       if (!match) throw new Error('Match not found');
@@ -221,12 +303,15 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
       const { game, winnerId } = gameResult;
 
       if (winnerId) {
+        this.turnDeadlines.delete(payload.matchId);
         const result = await this.multiplayerService.settleGame(payload.matchId, winnerId);
         this.server.to(payload.matchId).emit('game_over', { winnerId, prize: result.winnerPrize });
       } else {
+        const turnDeadline = this.setTurnDeadline(payload.matchId);
         const topCard = game.playedCards[game.playedCards.length - 1];
         this.server.to(payload.matchId).emit('game_state_update', {
           currentTurnUserId: game.currentTurnUserId,
+          turnDeadline,
           topCard,
           activeShape: game.activeShape || game.activeColor,
           playerCardCounts: game.players.map((p: any) => ({ userId: p.userId, count: p.hand.length }))
@@ -245,6 +330,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
 
   @SubscribeMessage('draw_market')
   async handleDrawMarket(@ConnectedSocket() client: Socket, @MessageBody() payload: { matchId: string }) {
+    if (!this.checkRateLimit(client)) return;
     try {
       const match = await this.prisma.multiplayerMatch.findUnique({ where: { id: payload.matchId } });
       if (!match) throw new Error('Match not found');
@@ -258,9 +344,11 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
       }
 
       const { game } = gameResult;
+      const turnDeadline = this.setTurnDeadline(payload.matchId);
 
       this.server.to(payload.matchId).emit('game_state_update', {
         currentTurnUserId: game.currentTurnUserId,
+        turnDeadline,
         topCard: game.playedCards[game.playedCards.length - 1],
         activeShape: game.activeShape || game.activeColor,
         playerCardCounts: game.players.map((p: any) => ({ userId: p.userId, count: p.hand.length }))
@@ -278,9 +366,12 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
 
   @SubscribeMessage('roll_dice')
   async handleRollDice(@ConnectedSocket() client: Socket, @MessageBody() payload: { matchId: string }) {
+    if (!this.checkRateLimit(client)) return;
     try {
       const match = await this.prisma.multiplayerMatch.findUnique({ where: { id: payload.matchId } });
       if (!match) throw new Error('Match not found');
+
+      const turnDeadline = this.setTurnDeadline(payload.matchId);
 
       if (match.gameType === 'LUDO') {
         const { game, roll, skipped, movableTokenIds } = this.ludoService.rollDice(payload.matchId, client.data.userId);
@@ -289,15 +380,17 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
           roll,
           skipped,
           movableTokenIds,
+          turnDeadline,
           currentTurnUserId: game.currentTurnUserId
         });
       } else if (match.gameType === 'MONOPOLY') {
         const { game, winnerId } = this.monopolyService.rollDice(payload.matchId, client.data.userId);
         if (winnerId) {
+          this.turnDeadlines.delete(payload.matchId);
           const result = await this.multiplayerService.settleGame(payload.matchId, winnerId);
           this.server.to(payload.matchId).emit('game_over', { winnerId, prize: result.winnerPrize });
         } else {
-          this.server.to(payload.matchId).emit('monopoly_state_update', { gameState: game });
+          this.server.to(payload.matchId).emit('monopoly_state_update', { gameState: game, turnDeadline });
         }
       }
     } catch (e) {
@@ -308,16 +401,20 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
 
   @SubscribeMessage('move_token')
   async handleMoveToken(@ConnectedSocket() client: Socket, @MessageBody() payload: { matchId: string, tokenId: number }) {
+    if (!this.checkRateLimit(client)) return;
     try {
       const { game, winnerId } = this.ludoService.moveToken(payload.matchId, client.data.userId, payload.tokenId);
 
       if (winnerId) {
+        this.turnDeadlines.delete(payload.matchId);
         const result = await this.multiplayerService.settleGame(payload.matchId, winnerId);
         this.server.to(payload.matchId).emit('game_over', { winnerId, prize: result.winnerPrize });
       } else {
+        const turnDeadline = this.setTurnDeadline(payload.matchId);
         this.server.to(payload.matchId).emit('ludo_state_update', {
           players: game.players,
           currentTurnUserId: game.currentTurnUserId,
+          turnDeadline,
           hasRolled: game.hasRolled
         });
       }
@@ -329,9 +426,11 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
 
   @SubscribeMessage('buy_property')
   async handleBuyProperty(@ConnectedSocket() client: Socket, @MessageBody() payload: { matchId: string }) {
+    if (!this.checkRateLimit(client)) return;
     try {
       const { game } = this.monopolyService.buyProperty(payload.matchId, client.data.userId);
-      this.server.to(payload.matchId).emit('monopoly_state_update', { gameState: game });
+      const turnDeadline = this.setTurnDeadline(payload.matchId);
+      this.server.to(payload.matchId).emit('monopoly_state_update', { gameState: game, turnDeadline });
     } catch (e) {
       const error = e as any;
       client.emit('error', { message: error.message });
@@ -340,9 +439,11 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
 
   @SubscribeMessage('end_turn')
   async handleEndTurn(@ConnectedSocket() client: Socket, @MessageBody() payload: { matchId: string }) {
+    if (!this.checkRateLimit(client)) return;
     try {
       const { game } = this.monopolyService.endTurn(payload.matchId, client.data.userId);
-      this.server.to(payload.matchId).emit('monopoly_state_update', { gameState: game });
+      const turnDeadline = this.setTurnDeadline(payload.matchId);
+      this.server.to(payload.matchId).emit('monopoly_state_update', { gameState: game, turnDeadline });
     } catch (e) {
       const error = e as any;
       client.emit('error', { message: error.message });
