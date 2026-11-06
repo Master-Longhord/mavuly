@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { ExecutionContext, Injectable, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
@@ -19,6 +19,16 @@ import { RolesGuard } from './common/guards/roles.guard';
 import { MailModule } from './modules/mail/mail.module';
 import { SupportModule } from './modules/support/support.module';
 import { MultiplayerModule } from './modules/multiplayer/multiplayer.module';
+
+@Injectable()
+export class HttpThrottlerGuard extends ThrottlerGuard {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    if (context.getType() === 'ws') {
+      return true;
+    }
+    return super.canActivate(context);
+  }
+}
 
 @Module({
   imports: [
@@ -44,7 +54,7 @@ import { MultiplayerModule } from './modules/multiplayer/multiplayer.module';
   controllers: [AppController],
   providers: [
     AppService,
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: HttpThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
   ],
