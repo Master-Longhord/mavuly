@@ -1,6 +1,6 @@
 import {
   WebSocketGateway, WebSocketServer, SubscribeMessage,
-  OnGatewayConnection, OnGatewayDisconnect, ConnectedSocket, MessageBody
+  OnGatewayConnection, OnGatewayDisconnect, ConnectedSocket, MessageBody, WsException
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
@@ -54,6 +54,23 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
     return deadline;
   }
 
+  private emitHandsToAllPlayers(players: { userId: string; hand: any[] }[]) {
+    for (const player of players) {
+      for (const [socketId, uid] of this.connectedUsers.entries()) {
+        if (uid === player.userId) {
+          this.server.to(socketId).emit('receive_cards', { hand: player.hand });
+        }
+      }
+    }
+  }
+
+  private handleWsError(client: Socket, e: unknown): never {
+    const err = e as any;
+    const message = err?.message || 'WebSocket action failed';
+    client.emit('error', { message });
+    throw new WsException(message);
+  }
+
   async handleConnection(client: Socket) {
     try {
       const token = client.handshake.auth.token || client.handshake.headers['authorization']?.split(' ')[1];
@@ -89,8 +106,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
       const match = await this.multiplayerService.getRoomInfo(payload.roomCode);
       client.emit('room_info_data', { match });
     } catch (e) {
-      const error = e as any;
-      client.emit('error', { message: error.message });
+      this.handleWsError(client, e);
     }
   }
 
@@ -107,8 +123,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
       client.join(match.id);
       client.emit('room_created', { match });
     } catch (e) {
-      const error = e as any;
-      client.emit('error', { message: error.message });
+      this.handleWsError(client, e);
     }
   }
 
@@ -123,8 +138,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
       client.join(match.id);
       this.server.to(match.id).emit('player_joined', { match });
     } catch (e) {
-      const error = e as any;
-      client.emit('error', { message: error.message });
+      this.handleWsError(client, e);
     }
   }
 
@@ -145,8 +159,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
         this.server.to(match.id).emit('player_joined', { match });
       }
     } catch (e) {
-      const error = e as any;
-      client.emit('error', { message: error.message });
+      this.handleWsError(client, e);
     }
   }
 
@@ -165,8 +178,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
         this.server.to(payload.matchId).emit('player_left', { match: result.match });
       }
     } catch (e) {
-      const error = e as any;
-      client.emit('error', { message: error.message });
+      this.handleWsError(client, e);
     }
   }
 
@@ -193,8 +205,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
         reason: 'afk_forfeit'
       });
     } catch (e) {
-      const error = e as any;
-      client.emit('error', { message: error.message });
+      this.handleWsError(client, e);
     }
   }
 
@@ -223,8 +234,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
         if (player) client.emit('receive_cards', { hand: player.hand });
       }
     } catch (e) {
-      const error = e as any;
-      client.emit('error', { message: error.message });
+      this.handleWsError(client, e);
     }
   }
 
@@ -268,20 +278,14 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
           currentTurnUserId: gameState.currentTurnUserId,
           turnDeadline,
           topCard,
-          activeShape: gameState.activeShape || gameState.activeColor
+          activeShape: gameState.activeShape || gameState.activeColor,
+          playerCardCounts: gameState.players.map((p: any) => ({ userId: p.userId, count: p.hand.length }))
         });
 
-        for (const player of gameState.players) {
-          const playerSocketId = [...this.connectedUsers.entries()]
-            .find(([socketId, uid]) => uid === player.userId)?.[0];
-          if (playerSocketId) {
-            this.server.to(playerSocketId).emit('receive_cards', { hand: player.hand });
-          }
-        }
+        this.emitHandsToAllPlayers(gameState.players);
       }
     } catch (e) {
-      const error = e as any;
-      client.emit('error', { message: error.message });
+      this.handleWsError(client, e);
     }
   }
 
@@ -298,9 +302,13 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
         gameResult = this.whotService.playCard(payload.matchId, client.data.userId, payload.cardId, payload.requestedShape as any);
       } else if (match.gameType === 'UNO') {
         gameResult = this.unoService.playCard(payload.matchId, client.data.userId, payload.cardId, payload.requestedShape as any);
+      } else {
+        throw new Error('Invalid game type for play_card');
       }
 
       const { game, winnerId } = gameResult;
+
+      this.emitHandsToAllPlayers(game.players);
 
       if (winnerId) {
         this.turnDeadlines.delete(payload.matchId);
@@ -314,17 +322,12 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
           turnDeadline,
           topCard,
           activeShape: game.activeShape || game.activeColor,
-          playerCardCounts: game.players.map((p: any) => ({ userId: p.userId, count: p.hand.length }))
+          playerCardCounts: game.players.map((p: any) => ({ userId: p.userId, count: p.hand.length })),
+          lastPlay: game.lastPlay
         });
-
-        const player = game.players.find((p: any) => p.userId === client.data.userId);
-        if (player) {
-          client.emit('receive_cards', { hand: player.hand });
-        }
       }
     } catch (e) {
-      const error = e as any;
-      client.emit('error', { message: error.message });
+      this.handleWsError(client, e);
     }
   }
 
@@ -341,26 +344,25 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
         gameResult = this.whotService.drawMarket(payload.matchId, client.data.userId, 1);
       } else if (match.gameType === 'UNO') {
         gameResult = this.unoService.drawMarket(payload.matchId, client.data.userId, 1);
+      } else {
+        throw new Error('Invalid game type for draw_market');
       }
 
       const { game } = gameResult;
       const turnDeadline = this.setTurnDeadline(payload.matchId);
+
+      this.emitHandsToAllPlayers(game.players);
 
       this.server.to(payload.matchId).emit('game_state_update', {
         currentTurnUserId: game.currentTurnUserId,
         turnDeadline,
         topCard: game.playedCards[game.playedCards.length - 1],
         activeShape: game.activeShape || game.activeColor,
-        playerCardCounts: game.players.map((p: any) => ({ userId: p.userId, count: p.hand.length }))
+        playerCardCounts: game.players.map((p: any) => ({ userId: p.userId, count: p.hand.length })),
+        lastPlay: game.lastPlay
       });
-
-      const player = game.players.find((p: any) => p.userId === client.data.userId);
-      if (player) {
-        client.emit('receive_cards', { hand: player.hand });
-      }
     } catch (e) {
-      const error = e as any;
-      client.emit('error', { message: error.message });
+      this.handleWsError(client, e);
     }
   }
 
@@ -394,8 +396,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
         }
       }
     } catch (e) {
-      const error = e as any;
-      client.emit('error', { message: error.message });
+      this.handleWsError(client, e);
     }
   }
 
@@ -419,8 +420,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
         });
       }
     } catch (e) {
-      const error = e as any;
-      client.emit('error', { message: error.message });
+      this.handleWsError(client, e);
     }
   }
 
@@ -432,8 +432,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
       const turnDeadline = this.setTurnDeadline(payload.matchId);
       this.server.to(payload.matchId).emit('monopoly_state_update', { gameState: game, turnDeadline });
     } catch (e) {
-      const error = e as any;
-      client.emit('error', { message: error.message });
+      this.handleWsError(client, e);
     }
   }
 
@@ -445,8 +444,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
       const turnDeadline = this.setTurnDeadline(payload.matchId);
       this.server.to(payload.matchId).emit('monopoly_state_update', { gameState: game, turnDeadline });
     } catch (e) {
-      const error = e as any;
-      client.emit('error', { message: error.message });
+      this.handleWsError(client, e);
     }
   }
 }
