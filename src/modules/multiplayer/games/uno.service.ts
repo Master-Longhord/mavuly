@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { WsException } from '@nestjs/websockets';
 
 export type UnoColor = 'RED' | 'YELLOW' | 'GREEN' | 'BLUE' | 'WILD';
 export type UnoType = '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | 'SKIP' | 'REVERSE' | 'DRAW_TWO' | 'WILD' | 'WILD_DRAW_FOUR';
@@ -17,7 +18,17 @@ export interface UnoGameState {
     currentTurnUserId: string;
     activeColor: UnoColor;
     playDirection: 1 | -1;
+    lastPlay: {
+        userId: string;
+        cardId: string | null;
+        effect: string;
+        affected: { userId: string; drew: number; skipped: boolean }[];
+        requestedShape?: UnoColor;
+    } | null;
 }
+
+const VALID_UNO_COLORS: UnoColor[] = ['RED', 'YELLOW', 'GREEN', 'BLUE'];
+const UNO_ACTION_TYPES: UnoType[] = ['SKIP', 'REVERSE', 'DRAW_TWO', 'WILD', 'WILD_DRAW_FOUR'];
 
 @Injectable()
 export class UnoService {
@@ -47,28 +58,36 @@ export class UnoService {
         return this.shuffle(deck);
     }
 
-    private shuffle(array: any[]) {
-        for (let i = array.length - 1; i > 0; i--) {
+    private shuffle<T>(array: T[]): T[] {
+        const copy = [...array];
+        for (let i = copy.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
-            [array[i], array[j]] = [array[j], array[i]];
+            [copy[i], copy[j]] = [copy[j]!, copy[i]!];
         }
-        return array;
+        return copy;
     }
 
     initializeGame(matchId: string, userIds: string[]): UnoGameState {
         const deck = this.generateDeck();
         const players = userIds.map(userId => ({ userId, hand: deck.splice(0, 7) }));
 
-        let firstIndex = deck.findIndex(c => c.color !== 'WILD' && !['SKIP', 'REVERSE', 'DRAW_TWO'].includes(c.type));
+        let firstIndex = deck.findIndex(c => c.color !== 'WILD' && !UNO_ACTION_TYPES.includes(c.type));
         if (firstIndex === -1) firstIndex = 0;
         const firstCard = deck.splice(firstIndex, 1)[0];
-        if (!firstCard) throw new Error('Deck generation failed');
+        if (!firstCard) throw new WsException('Deck generation failed');
 
         const gameState: UnoGameState = {
-            matchId, players, market: deck, playedCards: [firstCard],
-            currentTurnUserId: userIds[0]!, activeColor: firstCard.color, playDirection: 1,
+            matchId,
+            players,
+            market: deck,
+            playedCards: [firstCard],
+            currentTurnUserId: userIds[0]!,
+            activeColor: firstCard.color,
+            playDirection: 1,
+            lastPlay: null,
         };
 
+        this.assertDeckIntegrity(gameState);
         this.activeGames.set(matchId, gameState);
         return gameState;
     }
@@ -79,87 +98,153 @@ export class UnoService {
 
     drawMarket(matchId: string, userId: string, count: number = 1) {
         const game = this.activeGames.get(matchId);
-        if (!game || game.currentTurnUserId !== userId) throw new Error('Not your turn');
+        if (!game) throw new WsException('Game not found');
+        if (game.currentTurnUserId !== userId) throw new WsException('Not your turn');
 
         const player = game.players.find(p => p.userId === userId);
-        if (!player) throw new Error('Player not found');
+        if (!player) throw new WsException('Player not found');
 
-        if (game.market.length < count) {
-            const topCard = game.playedCards.pop();
-            if (!topCard) throw new Error('Played cards pile is empty');
-            game.market.push(...this.shuffle(game.playedCards));
-            game.playedCards = [topCard];
-        }
+        const drawnCards = this.forceDrawFromMarket(game, player, count);
+        game.currentTurnUserId = this.getPlayerAtStep(game, userId, 1).userId;
+        game.lastPlay = {
+            userId,
+            cardId: null,
+            effect: 'DRAW_MARKET',
+            affected: [{ userId, drew: drawnCards.length, skipped: false }],
+        };
 
-        player.hand.push(...game.market.splice(0, count));
-        this.nextTurn(game);
-        return { game };
+        this.assertDeckIntegrity(game);
+        return { game, drawnCards };
     }
 
     playCard(matchId: string, userId: string, cardId: string, requestedColor?: UnoColor) {
         const game = this.activeGames.get(matchId);
-        if (!game || game.currentTurnUserId !== userId) throw new Error('Not your turn');
+        if (!game) throw new WsException('Game not found');
+        if (game.currentTurnUserId !== userId) throw new WsException('Not your turn');
 
         const player = game.players.find(p => p.userId === userId);
-        if (!player) throw new Error('Player not found');
+        if (!player) throw new WsException('Player not found');
 
         const cardIndex = player.hand.findIndex(c => c.id === cardId);
-        if (cardIndex === -1) throw new Error('You do not own this card');
+        if (cardIndex === -1) throw new WsException('You do not own this card');
 
         const card = player.hand[cardIndex]!;
         const topCard = game.playedCards[game.playedCards.length - 1]!;
 
         if (card.color !== 'WILD' && card.color !== game.activeColor && card.type !== topCard.type) {
-            throw new Error('Invalid move. Must match color or number/symbol.');
+            throw new WsException('Invalid move. Must match color or number/symbol.');
         }
-        if (card.color === 'WILD' && !requestedColor) {
-            throw new Error('You must provide a requestedColor when playing a Wild card.');
+
+        const normalizedColor = requestedColor ? (requestedColor.toUpperCase() as UnoColor) : undefined;
+        if (card.color === 'WILD' && (!normalizedColor || !VALID_UNO_COLORS.includes(normalizedColor))) {
+            throw new WsException('You must provide a valid requestedShape color (RED, YELLOW, GREEN, BLUE) when playing a Wild card.');
         }
 
         player.hand.splice(cardIndex, 1);
         game.playedCards.push(card);
-        game.activeColor = card.color === 'WILD' ? requestedColor! : card.color;
+        game.activeColor = card.color === 'WILD' ? normalizedColor! : card.color;
 
-        if (player.hand.length === 0) return { game, winnerId: userId };
+        const affected: { userId: string; drew: number; skipped: boolean }[] = [];
+        let effect = 'NONE';
+        let nextTurnUserId = this.getPlayerAtStep(game, userId, 1).userId;
 
         if (card.type === 'REVERSE') {
+            effect = 'HOLD_ON';
             game.playDirection = (game.playDirection * -1) as 1 | -1;
-            if (game.players.length === 2) this.nextTurn(game);
+            if (game.players.length === 2) {
+                const target = this.getPlayerAtStep(game, userId, 1);
+                affected.push({ userId: target.userId, drew: 0, skipped: true });
+                nextTurnUserId = userId;
+            } else {
+                nextTurnUserId = this.getPlayerAtStep(game, userId, 1).userId;
+            }
         } else if (card.type === 'SKIP') {
-            this.nextTurn(game);
+            effect = 'SUSPENSION';
+            const target = this.getPlayerAtStep(game, userId, 1);
+            affected.push({ userId: target.userId, drew: 0, skipped: true });
+            nextTurnUserId = this.getPlayerAtStep(game, userId, 2).userId;
         } else if (card.type === 'DRAW_TWO') {
-            const nextPlayer = this.getNextPlayer(game);
-            this.forceDraw(game, nextPlayer.userId, 2);
-            this.nextTurn(game);
+            effect = 'PICK_TWO';
+            const target = this.getPlayerAtStep(game, userId, 1);
+            const drawn = this.forceDrawFromMarket(game, target, 2);
+            affected.push({ userId: target.userId, drew: drawn.length, skipped: true });
+            nextTurnUserId = this.getPlayerAtStep(game, userId, 2).userId;
         } else if (card.type === 'WILD_DRAW_FOUR') {
-            const nextPlayer = this.getNextPlayer(game);
-            this.forceDraw(game, nextPlayer.userId, 4);
-            this.nextTurn(game);
+            effect = 'PICK_THREE';
+            const target = this.getPlayerAtStep(game, userId, 1);
+            const drawn = this.forceDrawFromMarket(game, target, 4);
+            affected.push({ userId: target.userId, drew: drawn.length, skipped: true });
+            nextTurnUserId = this.getPlayerAtStep(game, userId, 2).userId;
+        } else if (card.type === 'WILD') {
+            effect = 'WHOT';
+            nextTurnUserId = this.getPlayerAtStep(game, userId, 1).userId;
         }
 
-        this.nextTurn(game);
-        return { game, winnerId: null };
-    }
-
-    private forceDraw(game: UnoGameState, userId: string, count: number) {
-        const player = game.players.find(p => p.userId === userId);
-        if (game.market.length < count) {
-            const topCard = game.playedCards.pop();
-            if (!topCard) throw new Error('Played cards pile is empty');
-            game.market.push(...this.shuffle(game.playedCards));
-            game.playedCards = [topCard];
+        let winnerId: string | null = null;
+        if (player.hand.length === 0) {
+            if (UNO_ACTION_TYPES.includes(card.type)) {
+                this.forceDrawFromMarket(game, player, 2);
+            } else {
+                winnerId = userId;
+            }
         }
-        player!.hand.push(...game.market.splice(0, count));
+
+        game.currentTurnUserId = nextTurnUserId;
+        game.lastPlay = {
+            userId,
+            cardId: card.id,
+            effect,
+            affected,
+            ...(card.color === 'WILD' && normalizedColor ? { requestedShape: normalizedColor } : {}),
+        };
+
+        this.assertDeckIntegrity(game);
+        return { game, winnerId };
     }
 
-    private getNextPlayer(game: UnoGameState) {
-        const currentIndex = game.players.findIndex(p => p.userId === game.currentTurnUserId);
-        let nextIndex = (currentIndex + game.playDirection) % game.players.length;
-        if (nextIndex < 0) nextIndex += game.players.length;
+    private forceDrawFromMarket(
+        game: UnoGameState,
+        player: { userId: string; hand: UnoCard[] },
+        count: number
+    ): UnoCard[] {
+        const drawn: UnoCard[] = [];
+        for (let i = 0; i < count; i++) {
+            if (game.market.length === 0) {
+                if (game.playedCards.length <= 1) break;
+                const recyclable = game.playedCards.splice(0, game.playedCards.length - 1);
+                game.market.push(...this.shuffle(recyclable));
+            }
+            const nextCard = game.market.shift();
+            if (nextCard) {
+                player.hand.push(nextCard);
+                drawn.push(nextCard);
+            }
+        }
+        return drawn;
+    }
+
+    private getPlayerAtStep(game: UnoGameState, fromUserId: string, steps: number) {
+        const currentIndex = game.players.findIndex(p => p.userId === fromUserId);
+        const total = game.players.length;
+        const nextIndex = (((currentIndex + steps * game.playDirection) % total) + total) % total;
         return game.players[nextIndex]!;
     }
 
-    private nextTurn(game: UnoGameState) {
-        game.currentTurnUserId = this.getNextPlayer(game).userId;
+    assertDeckIntegrity(game: UnoGameState) {
+        const seen = new Set<string>();
+        const allCards = [
+            ...game.market,
+            ...game.playedCards,
+            ...game.players.flatMap(p => p.hand),
+        ];
+        for (const c of allCards) {
+            if (seen.has(c.id)) {
+                throw new WsException(`Uno deck integrity violation: duplicate card ${c.id}`);
+            }
+            seen.add(c.id);
+        }
+        if (seen.size !== 108) {
+            throw new WsException(`Uno deck integrity violation: expected 108 cards, found ${seen.size}`);
+        }
     }
 }

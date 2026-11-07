@@ -1,11 +1,31 @@
 import { Injectable } from '@nestjs/common';
+import { WsException } from '@nestjs/websockets';
 
 export type CardShape = 'CIRCLE' | 'TRIANGLE' | 'CROSS' | 'SQUARE' | 'STAR' | 'WHOT';
+
+export type WhotEffect =
+    | 'PICK_TWO'
+    | 'PICK_THREE'
+    | 'GENERAL_MARKET'
+    | 'HOLD_ON'
+    | 'SUSPENSION'
+    | 'WHOT'
+    | 'NONE'
+    | 'DRAW_MARKET';
 
 export interface Card {
     id: string;
     shape: CardShape;
     number: number;
+}
+
+export interface LastPlayInfo {
+    userId: string;
+    cardId: string | null;
+    effect: WhotEffect;
+    affected: { userId: string; drew: number; skipped: boolean }[];
+    requestedShape?: CardShape;
+    checkupPenaltyDrew?: number;
 }
 
 export interface WhotGameState {
@@ -15,7 +35,11 @@ export interface WhotGameState {
     playedCards: Card[];
     currentTurnUserId: string;
     activeShape: CardShape;
+    lastPlay: LastPlayInfo | null;
 }
+
+const VALID_REQUESTED_SHAPES: CardShape[] = ['CIRCLE', 'TRIANGLE', 'CROSS', 'SQUARE', 'STAR'];
+const ACTION_NUMBERS = [1, 2, 5, 8, 14, 20];
 
 @Injectable()
 export class WhotService {
@@ -38,31 +62,30 @@ export class WhotService {
         addCards('STAR', [1, 2, 3, 4, 5, 7, 8]);
         addCards('WHOT', [20, 20, 20, 20, 20]);
 
-        return this.shuffle(deck);
+        return this.shuffle([...deck]);
     }
 
-    private shuffle(array: any[]) {
-        for (let i = array.length - 1; i > 0; i--) {
+    private shuffle<T>(array: T[]): T[] {
+        const copy = [...array];
+        for (let i = copy.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
-            [array[i], array[j]] = [array[j], array[i]];
+            [copy[i], copy[j]] = [copy[j]!, copy[i]!];
         }
-        return array;
+        return copy;
     }
 
     initializeGame(matchId: string, userIds: string[]): WhotGameState {
         const deck = this.generateDeck();
-        const players = [];
+        const players = userIds.map(userId => ({
+            userId,
+            hand: deck.splice(0, 5),
+        }));
 
-        for (const userId of userIds) {
-            const hand = deck.splice(0, 5);
-            players.push({ userId, hand });
-        }
-
-        let firstCardIndex = deck.findIndex(c => ![1, 2, 5, 8, 14, 20].includes(c.number));
+        let firstCardIndex = deck.findIndex(c => !ACTION_NUMBERS.includes(c.number));
         if (firstCardIndex === -1) firstCardIndex = 0;
 
         const firstCard = deck.splice(firstCardIndex, 1)[0];
-        if (!firstCard) throw new Error('Deck generation failed');
+        if (!firstCard) throw new WsException('Deck generation failed');
 
         const gameState: WhotGameState = {
             matchId,
@@ -71,8 +94,10 @@ export class WhotService {
             playedCards: [firstCard],
             currentTurnUserId: userIds[0]!,
             activeShape: firstCard.shape,
+            lastPlay: null,
         };
 
+        this.assertDeckIntegrity(gameState);
         this.activeGames.set(matchId, gameState);
         return gameState;
     }
@@ -83,84 +108,174 @@ export class WhotService {
 
     drawMarket(matchId: string, userId: string, count: number = 1) {
         const game = this.activeGames.get(matchId);
-        if (!game || game.currentTurnUserId !== userId) throw new Error('Not your turn');
+        if (!game) throw new WsException('Game not found');
+        if (game.currentTurnUserId !== userId) throw new WsException('Not your turn');
 
         const player = game.players.find(p => p.userId === userId);
-        if (!player) throw new Error('Player not found');
+        if (!player) throw new WsException('Player not found');
 
-        if (game.market.length < count) {
-            const topCard = game.playedCards.pop();
-            if (!topCard) throw new Error('Played cards pile is empty');
+        const drawnCards = this.forceDrawFromMarket(game, player, count);
+        const nextPlayer = this.getPlayerAtOffset(game, userId, 1);
+        game.currentTurnUserId = nextPlayer.userId;
 
-            game.market.push(...this.shuffle(game.playedCards));
-            game.playedCards = [topCard];
-        }
+        game.lastPlay = {
+            userId,
+            cardId: null,
+            effect: 'DRAW_MARKET',
+            affected: [{ userId, drew: drawnCards.length, skipped: false }],
+        };
 
-        const drawnCards = game.market.splice(0, count);
-        player.hand.push(...drawnCards);
-
-        this.nextTurn(game);
+        this.assertDeckIntegrity(game);
         return { game, drawnCards };
     }
 
     playCard(matchId: string, userId: string, cardId: string, requestedShape?: CardShape) {
         const game = this.activeGames.get(matchId);
-        if (!game || game.currentTurnUserId !== userId) throw new Error('Not your turn');
+        if (!game) throw new WsException('Game not found');
+        if (game.currentTurnUserId !== userId) throw new WsException('Not your turn');
 
         const player = game.players.find(p => p.userId === userId);
-        if (!player) throw new Error('Player not found');
+        if (!player) throw new WsException('Player not found');
 
         const cardIndex = player.hand.findIndex(c => c.id === cardId);
-        if (cardIndex === -1) throw new Error('You do not own this card');
+        if (cardIndex === -1) throw new WsException('You do not own this card');
 
         const card = player.hand[cardIndex]!;
         const topCard = game.playedCards[game.playedCards.length - 1]!;
 
         if (card.number !== 20 && card.shape !== game.activeShape && card.number !== topCard.number) {
-            throw new Error('Invalid move. Must match shape or number.');
+            throw new WsException('Invalid move. Must match shape or number.');
+        }
+
+        const normalizedRequestedShape = requestedShape
+            ? (requestedShape.toUpperCase() as CardShape)
+            : undefined;
+
+        if (card.number === 20) {
+            if (!normalizedRequestedShape || !VALID_REQUESTED_SHAPES.includes(normalizedRequestedShape)) {
+                throw new WsException('You must choose a valid shape (CIRCLE, TRIANGLE, CROSS, SQUARE, STAR) when playing Whot (20).');
+            }
         }
 
         player.hand.splice(cardIndex, 1);
         game.playedCards.push(card);
-        game.activeShape = card.number === 20 && requestedShape ? requestedShape : card.shape;
+        game.activeShape = card.number === 20 ? normalizedRequestedShape! : card.shape;
 
-        if (player.hand.length === 0) {
-            if ([1, 2, 5, 8, 14, 20].includes(card.number)) {
-                this.drawMarket(matchId, userId, 2);
-            } else {
-                return { game, winnerId: userId };
-            }
-        }
+        const affected: { userId: string; drew: number; skipped: boolean }[] = [];
+        let effect: WhotEffect = 'NONE';
+        let nextTurnUserId = this.getPlayerAtOffset(game, userId, 1).userId;
 
         if (card.number === 1) {
+            effect = 'HOLD_ON';
+            const skippedPlayer = this.getPlayerAtOffset(game, userId, 1);
+            affected.push({ userId: skippedPlayer.userId, drew: 0, skipped: true });
+            nextTurnUserId = userId;
         } else if (card.number === 2) {
-            const nextPlayer = this.getNextPlayer(game);
-            this.drawMarket(matchId, nextPlayer.userId, 2);
+            effect = 'PICK_TWO';
+            const target = this.getPlayerAtOffset(game, userId, 1);
+            const drawn = this.forceDrawFromMarket(game, target, 2);
+            affected.push({ userId: target.userId, drew: drawn.length, skipped: true });
+            nextTurnUserId = this.getPlayerAtOffset(game, userId, 2).userId;
         } else if (card.number === 5) {
-            const nextPlayer = this.getNextPlayer(game);
-            this.drawMarket(matchId, nextPlayer.userId, 3);
+            effect = 'PICK_THREE';
+            const target = this.getPlayerAtOffset(game, userId, 1);
+            const drawn = this.forceDrawFromMarket(game, target, 3);
+            affected.push({ userId: target.userId, drew: drawn.length, skipped: true });
+            nextTurnUserId = this.getPlayerAtOffset(game, userId, 2).userId;
         } else if (card.number === 8) {
-            this.nextTurn(game);
-            this.nextTurn(game);
+            effect = 'SUSPENSION';
+            const target = this.getPlayerAtOffset(game, userId, 1);
+            affected.push({ userId: target.userId, drew: 0, skipped: true });
+            nextTurnUserId = this.getPlayerAtOffset(game, userId, 2).userId;
         } else if (card.number === 14) {
-            for (const p of game.players) {
-                if (p.userId !== userId) this.drawMarket(matchId, p.userId, 1);
+            effect = 'GENERAL_MARKET';
+            for (const other of game.players) {
+                if (other.userId !== userId) {
+                    const drawn = this.forceDrawFromMarket(game, other, 1);
+                    affected.push({ userId: other.userId, drew: drawn.length, skipped: true });
+                }
             }
-            this.nextTurn(game);
-        } else {
-            this.nextTurn(game);
+            nextTurnUserId = userId;
+        } else if (card.number === 20) {
+            effect = 'WHOT';
+            nextTurnUserId = this.getPlayerAtOffset(game, userId, 1).userId;
         }
 
-        return { game, winnerId: null };
+        let checkupPenaltyDrew = 0;
+        let winnerId: string | null = null;
+
+        if (player.hand.length === 0) {
+            if (ACTION_NUMBERS.includes(card.number)) {
+                const penaltyCards = this.forceDrawFromMarket(game, player, 2);
+                checkupPenaltyDrew = penaltyCards.length;
+            } else {
+                winnerId = userId;
+            }
+        }
+
+        game.currentTurnUserId = nextTurnUserId;
+        game.lastPlay = {
+            userId,
+            cardId: card.id,
+            effect,
+            affected,
+            ...(card.number === 20 && normalizedRequestedShape ? { requestedShape: normalizedRequestedShape } : {}),
+            ...(checkupPenaltyDrew > 0 ? { checkupPenaltyDrew } : {}),
+        };
+
+        this.assertDeckIntegrity(game);
+        return { game, winnerId };
     }
 
-    private getNextPlayer(game: WhotGameState) {
-        const currentIndex = game.players.findIndex(p => p.userId === game.currentTurnUserId);
-        const nextIndex = (currentIndex + 1) % game.players.length;
+    private forceDrawFromMarket(
+        game: WhotGameState,
+        player: { userId: string; hand: Card[] },
+        count: number
+    ): Card[] {
+        const drawn: Card[] = [];
+
+        for (let i = 0; i < count; i++) {
+            if (game.market.length === 0) {
+                if (game.playedCards.length <= 1) {
+                    break;
+                }
+                const recyclable = game.playedCards.splice(0, game.playedCards.length - 1);
+                game.market.push(...this.shuffle(recyclable));
+            }
+
+            const nextCard = game.market.shift();
+            if (nextCard) {
+                player.hand.push(nextCard);
+                drawn.push(nextCard);
+            }
+        }
+
+        return drawn;
+    }
+
+    private getPlayerAtOffset(game: WhotGameState, fromUserId: string, offset: number) {
+        const currentIndex = game.players.findIndex(p => p.userId === fromUserId);
+        const nextIndex = (currentIndex + offset) % game.players.length;
         return game.players[nextIndex]!;
     }
 
-    private nextTurn(game: WhotGameState) {
-        game.currentTurnUserId = this.getNextPlayer(game).userId;
+    assertDeckIntegrity(game: WhotGameState) {
+        const seen = new Set<string>();
+        const allCards: Card[] = [
+            ...game.market,
+            ...game.playedCards,
+            ...game.players.flatMap(p => p.hand),
+        ];
+
+        for (const c of allCards) {
+            if (seen.has(c.id)) {
+                throw new WsException(`Deck integrity violation: duplicate card ${c.id}`);
+            }
+            seen.add(c.id);
+        }
+
+        if (seen.size !== 54) {
+            throw new WsException(`Deck integrity violation: expected 54 unique cards, found ${seen.size}`);
+        }
     }
 }
