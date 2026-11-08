@@ -24,6 +24,7 @@ export interface UnoGameState {
         effect: string;
         affected: { userId: string; drew: number; skipped: boolean }[];
         requestedShape?: UnoColor;
+        checkupPenaltyDrew?: number;
     } | null;
 }
 
@@ -149,7 +150,7 @@ export class UnoService {
         let nextTurnUserId = this.getPlayerAtStep(game, userId, 1).userId;
 
         if (card.type === 'REVERSE') {
-            effect = 'HOLD_ON';
+            effect = 'REVERSE';
             game.playDirection = (game.playDirection * -1) as 1 | -1;
             if (game.players.length === 2) {
                 const target = this.getPlayerAtStep(game, userId, 1);
@@ -159,31 +160,33 @@ export class UnoService {
                 nextTurnUserId = this.getPlayerAtStep(game, userId, 1).userId;
             }
         } else if (card.type === 'SKIP') {
-            effect = 'SUSPENSION';
+            effect = 'SKIP';
             const target = this.getPlayerAtStep(game, userId, 1);
             affected.push({ userId: target.userId, drew: 0, skipped: true });
             nextTurnUserId = this.getPlayerAtStep(game, userId, 2).userId;
         } else if (card.type === 'DRAW_TWO') {
-            effect = 'PICK_TWO';
+            effect = 'DRAW_TWO';
             const target = this.getPlayerAtStep(game, userId, 1);
             const drawn = this.forceDrawFromMarket(game, target, 2);
             affected.push({ userId: target.userId, drew: drawn.length, skipped: true });
             nextTurnUserId = this.getPlayerAtStep(game, userId, 2).userId;
         } else if (card.type === 'WILD_DRAW_FOUR') {
-            effect = 'PICK_THREE';
+            effect = 'WILD_DRAW_FOUR';
             const target = this.getPlayerAtStep(game, userId, 1);
             const drawn = this.forceDrawFromMarket(game, target, 4);
             affected.push({ userId: target.userId, drew: drawn.length, skipped: true });
             nextTurnUserId = this.getPlayerAtStep(game, userId, 2).userId;
         } else if (card.type === 'WILD') {
-            effect = 'WHOT';
+            effect = 'WILD';
             nextTurnUserId = this.getPlayerAtStep(game, userId, 1).userId;
         }
 
+        let checkupPenaltyDrew = 0;
         let winnerId: string | null = null;
         if (player.hand.length === 0) {
             if (UNO_ACTION_TYPES.includes(card.type)) {
-                this.forceDrawFromMarket(game, player, 2);
+                const penaltyCards = this.forceDrawFromMarket(game, player, 2);
+                checkupPenaltyDrew = penaltyCards.length;
             } else {
                 winnerId = userId;
             }
@@ -196,6 +199,7 @@ export class UnoService {
             effect,
             affected,
             ...(card.color === 'WILD' && normalizedColor ? { requestedShape: normalizedColor } : {}),
+            ...(checkupPenaltyDrew > 0 ? { checkupPenaltyDrew } : {}),
         };
 
         this.assertDeckIntegrity(game);
