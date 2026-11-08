@@ -279,6 +279,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
           turnDeadline,
           topCard,
           activeShape: gameState.activeShape || gameState.activeColor,
+          direction: gameState.playDirection ?? 1,
           playerCardCounts: gameState.players.map((p: any) => ({ userId: p.userId, count: p.hand.length }))
         });
 
@@ -322,6 +323,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
           turnDeadline,
           topCard,
           activeShape: game.activeShape || game.activeColor,
+          direction: game.playDirection ?? 1,
           playerCardCounts: game.players.map((p: any) => ({ userId: p.userId, count: p.hand.length })),
           lastPlay: game.lastPlay
         });
@@ -358,6 +360,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
         turnDeadline,
         topCard: game.playedCards[game.playedCards.length - 1],
         activeShape: game.activeShape || game.activeColor,
+        direction: game.playDirection ?? 1,
         playerCardCounts: game.players.map((p: any) => ({ userId: p.userId, count: p.hand.length })),
         lastPlay: game.lastPlay
       });
@@ -385,6 +388,16 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
           turnDeadline,
           currentTurnUserId: game.currentTurnUserId
         });
+
+        if (skipped) {
+          this.server.to(payload.matchId).emit('ludo_state_update', {
+            players: game.players,
+            currentTurnUserId: game.currentTurnUserId,
+            turnDeadline,
+            hasRolled: game.hasRolled,
+            lastMove: null
+          });
+        }
       } else if (match.gameType === 'MONOPOLY') {
         const { game, winnerId } = this.monopolyService.rollDice(payload.matchId, client.data.userId);
         if (winnerId) {
@@ -409,14 +422,15 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
       if (winnerId) {
         this.turnDeadlines.delete(payload.matchId);
         const result = await this.multiplayerService.settleGame(payload.matchId, winnerId);
-        this.server.to(payload.matchId).emit('game_over', { winnerId, prize: result.winnerPrize });
+        this.server.to(payload.matchId).emit('game_over', { winnerId, prize: result.winnerPrize, lastMove: game.lastMove });
       } else {
         const turnDeadline = this.setTurnDeadline(payload.matchId);
         this.server.to(payload.matchId).emit('ludo_state_update', {
           players: game.players,
           currentTurnUserId: game.currentTurnUserId,
           turnDeadline,
-          hasRolled: game.hasRolled
+          hasRolled: game.hasRolled,
+          lastMove: game.lastMove
         });
       }
     } catch (e) {
