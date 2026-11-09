@@ -1,4 +1,4 @@
-import { Body, Controller, Param, Patch, Post, Get, UnauthorizedException, Headers } from '@nestjs/common';
+import { Body, Controller, Param, Patch, Post, Get, UnauthorizedException, Headers, Query } from '@nestjs/common';
 import { SubmissionsService } from './submissions.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -44,8 +44,18 @@ export class SubmissionsController {
 
     @Roles(AccountType.DEVELOPER)
     @Get('developer')
-    getDeveloperSubmissions(@CurrentUser('id') developerId: string) {
-        return this.submissionsService.getDeveloperSubmissions(developerId);
+    getDeveloperSubmissions(
+        @CurrentUser('id') developerId: string,
+        @Query('page') page?: string,
+        @Query('limit') limit?: string,
+        @Query('campaignId') campaignId?: string
+    ) {
+        return this.submissionsService.getDeveloperSubmissions(
+            developerId,
+            page ? Number(page) : 1,
+            limit ? Number(limit) : 20,
+            campaignId
+        );
     }
 
     @Public()

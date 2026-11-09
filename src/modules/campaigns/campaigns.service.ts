@@ -201,4 +201,100 @@ export class CampaignsService {
             campaigns: campaignRows
         };
     }
+
+    async getDeveloperResults(developerId: string, days: number = 30, campaignId?: string) {
+        const numDays = Math.max(1, Math.min(365, Number(days) || 30));
+
+        const campaigns = await this.prisma.campaign.findMany({
+            where: {
+                developerId,
+                ...(campaignId ? { id: campaignId } : {})
+            },
+            include: {
+                submissions: {
+                    include: { feedback: true }
+                }
+            },
+            orderBy: { createdAt: 'desc' }
+        });
+
+        const dayStrings: string[] = [];
+        for (let i = numDays - 1; i >= 0; i--) {
+            const d = new Date();
+            d.setUTCHours(0, 0, 0, 0);
+            d.setUTCDate(d.getUTCDate() - i);
+            dayStrings.push(d.toISOString().slice(0, 10));
+        }
+
+        const distribution: Record<string, number> = { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0 };
+        let totalRatingSum = 0;
+        let totalRatingCount = 0;
+        const campaignRatings: { campaignId: string; title: string; average: number; count: number }[] = [];
+
+        const growth = campaigns.map(c => {
+            const subs = c.submissions;
+            const started = subs.length;
+            const submitted = subs.filter(s => ['SUBMITTED', 'APPROVED', 'REJECTED'].includes(s.status)).length;
+            const approved = subs.filter(s => s.status === 'APPROVED').length;
+            const rejected = subs.filter(s => s.status === 'REJECTED').length;
+
+            const series = dayStrings.map(day => {
+                let dayStarted = 0;
+                let daySubmitted = 0;
+                let dayApproved = 0;
+
+                for (const s of subs) {
+                    if (s.startedAt && s.startedAt.toISOString().slice(0, 10) === day) dayStarted++;
+                    if (s.submittedAt && s.submittedAt.toISOString().slice(0, 10) === day) daySubmitted++;
+                    if (s.status === 'APPROVED' && s.verifiedAt && s.verifiedAt.toISOString().slice(0, 10) === day) {
+                        dayApproved++;
+                    }
+                }
+
+                return { day, started: dayStarted, submitted: daySubmitted, approved: dayApproved };
+            });
+
+            let campRatingSum = 0;
+            let campRatingCount = 0;
+
+            for (const s of subs) {
+                if (s.feedback && typeof s.feedback.rating === 'number') {
+                    const r = Math.max(1, Math.min(5, Math.round(s.feedback.rating)));
+                    distribution[String(r)] = (distribution[String(r)] || 0) + 1;
+                    campRatingSum += r;
+                    campRatingCount++;
+                    totalRatingSum += r;
+                    totalRatingCount++;
+                }
+            }
+
+            campaignRatings.push({
+                campaignId: c.id,
+                title: c.title,
+                average: campRatingCount > 0 ? Number((campRatingSum / campRatingCount).toFixed(1)) : 0,
+                count: campRatingCount
+            });
+
+            return {
+                campaignId: c.id,
+                title: c.title,
+                targetTesters: c.targetTesters,
+                started,
+                submitted,
+                approved,
+                rejected,
+                series
+            };
+        });
+
+        return {
+            growth,
+            ratings: {
+                average: totalRatingCount > 0 ? Number((totalRatingSum / totalRatingCount).toFixed(1)) : 0,
+                count: totalRatingCount,
+                distribution,
+                campaigns: campaignRatings
+            }
+        };
+    }
 }
