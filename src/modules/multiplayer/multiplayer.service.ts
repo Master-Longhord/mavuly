@@ -4,6 +4,8 @@ import { GameType, MatchStatus } from '@prisma/client';
 import * as crypto from 'crypto';
 import { pickBotName } from '../arcade/utils/ghost-bot.util';
 
+const ROOM_EXPIRY_MS = 5 * 60 * 1000;
+
 @Injectable()
 export class MultiplayerService {
     constructor(private prisma: PrismaService) { }
@@ -12,17 +14,76 @@ export class MultiplayerService {
         return crypto.randomBytes(3).toString('hex').toUpperCase();
     }
 
+    async expireRoomAndRefund(matchId: string, allowPlayingOrphan: boolean = false) {
+        return this.prisma.$transaction(async (tx) => {
+            const match = await tx.multiplayerMatch.findUnique({
+                where: { id: matchId },
+                include: { participants: true }
+            });
+
+            if (!match) return { expired: false };
+
+            const canExpire =
+                match.status === MatchStatus.WAITING_OPPONENT ||
+                (allowPlayingOrphan && match.status === MatchStatus.PLAYING);
+
+            if (!canExpire) {
+                return { expired: false };
+            }
+
+            for (const p of match.participants) {
+                await tx.user.update({
+                    where: { id: p.userId },
+                    data: { coinBalance: { increment: match.stakeAmount } }
+                });
+            }
+
+            await tx.multiplayerMatch.update({
+                where: { id: matchId },
+                data: { status: MatchStatus.EXPIRED_REFUNDED, prizePool: 0 }
+            });
+
+            return {
+                expired: true,
+                matchId,
+                message: 'Room expired due to 5 minutes of inactivity. Your stake has been refunded.'
+            };
+        });
+    }
+
+    async cleanupExpiredWaitingRooms() {
+        const cutoff = new Date(Date.now() - ROOM_EXPIRY_MS);
+        const staleRooms = await this.prisma.multiplayerMatch.findMany({
+            where: {
+                status: MatchStatus.WAITING_OPPONENT,
+                createdAt: { lt: cutoff }
+            },
+            select: { id: true }
+        });
+
+        for (const r of staleRooms) {
+            await this.expireRoomAndRefund(r.id);
+        }
+    }
+
     async getRoomInfo(roomCode: string) {
+        await this.cleanupExpiredWaitingRooms();
+
         const match = await this.prisma.multiplayerMatch.findUnique({
             where: { roomCode: roomCode.toUpperCase() },
             include: { participants: { include: { user: { select: { name: true } } } } }
         });
         if (!match) throw new NotFoundException('Room not found');
+        if (match.status === MatchStatus.EXPIRED_REFUNDED) {
+            throw new BadRequestException('This room expired after 5 minutes of inactivity.');
+        }
         return match;
     }
 
     async createPrivateRoom(userId: string, gameType: GameType, stakeAmount: number, maxPlayers: number) {
         if (stakeAmount < 10) throw new BadRequestException('Minimum stake is 10 coins');
+
+        await this.cleanupExpiredWaitingRooms();
 
         return this.prisma.$transaction(async (tx) => {
             const user = await tx.user.findUnique({ where: { id: userId } });
@@ -56,6 +117,8 @@ export class MultiplayerService {
     }
 
     async joinRoom(userId: string, roomCode: string, expectedStake?: number) {
+        await this.cleanupExpiredWaitingRooms();
+
         return this.prisma.$transaction(async (tx) => {
             const match = await tx.multiplayerMatch.findUnique({
                 where: { roomCode: roomCode.toUpperCase() },
@@ -63,6 +126,9 @@ export class MultiplayerService {
             });
 
             if (!match) throw new NotFoundException('Room not found');
+            if (match.status === MatchStatus.EXPIRED_REFUNDED) {
+                throw new BadRequestException('This room expired after 5 minutes of inactivity.');
+            }
             if (expectedStake !== undefined && match.stakeAmount !== expectedStake) {
                 throw new BadRequestException(`Stake mismatch. Room stake is ${match.stakeAmount} coins.`);
             }
@@ -98,18 +164,20 @@ export class MultiplayerService {
     }
 
     async quickMatch(userId: string, gameType: GameType, stakeAmount: number, maxPlayers: number, vsBot?: boolean) {
+        await this.cleanupExpiredWaitingRooms();
+
         if (vsBot) {
             return { match: await this.createPrivateRoom(userId, gameType, stakeAmount, maxPlayers), isNew: true };
         }
 
-        const tenMinsAgo = new Date(Date.now() - 10 * 60 * 1000);
+        const fiveMinsAgo = new Date(Date.now() - ROOM_EXPIRY_MS);
         const openRooms = await this.prisma.multiplayerMatch.findMany({
             where: {
                 gameType,
                 stakeAmount,
                 maxPlayers,
                 status: MatchStatus.WAITING_OPPONENT,
-                createdAt: { gte: tenMinsAgo }
+                createdAt: { gte: fiveMinsAgo }
             },
             include: { participants: true },
             orderBy: { createdAt: 'asc' }
@@ -148,7 +216,7 @@ export class MultiplayerService {
             }
 
             if (match.status !== MatchStatus.WAITING_OPPONENT) {
-                throw new BadRequestException('Room is already closed');
+                return { cancelled: true, message: 'Room is already closed.' };
             }
 
             if (match.hostId === userId) {
@@ -192,6 +260,9 @@ export class MultiplayerService {
 
         if (!match) throw new NotFoundException('Match not found');
         if (match.hostId !== userId) throw new BadRequestException('Only the host can start the game');
+        if (match.status === MatchStatus.EXPIRED_REFUNDED) {
+            throw new BadRequestException('This room expired after 5 minutes of inactivity.');
+        }
         if (match.status !== MatchStatus.WAITING_OPPONENT) throw new BadRequestException('Game already started');
 
         const needsBotFill = match.participants.length === 1;
