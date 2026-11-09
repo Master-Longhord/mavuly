@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { GameType, MatchStatus } from '@prisma/client';
 import * as crypto from 'crypto';
+import { pickBotName } from '../arcade/utils/ghost-bot.util';
 
 @Injectable()
 export class MultiplayerService {
@@ -96,7 +97,11 @@ export class MultiplayerService {
         });
     }
 
-    async quickMatch(userId: string, gameType: GameType, stakeAmount: number, maxPlayers: number) {
+    async quickMatch(userId: string, gameType: GameType, stakeAmount: number, maxPlayers: number, vsBot?: boolean) {
+        if (vsBot) {
+            return { match: await this.createPrivateRoom(userId, gameType, stakeAmount, maxPlayers), isNew: true };
+        }
+
         const tenMinsAgo = new Date(Date.now() - 10 * 60 * 1000);
         const openRooms = await this.prisma.multiplayerMatch.findMany({
             where: {
@@ -132,12 +137,14 @@ export class MultiplayerService {
 
             if (match.status === MatchStatus.PLAYING) {
                 const remaining = match.participants.filter(p => p.userId !== userId);
-                if (remaining.length === 1) {
+                if (remaining.length >= 1) {
                     const winnerId = remaining[0]!.userId;
                     const result = await this.settleGame(matchId, winnerId);
                     return { forfeited: true, winnerId, prize: result.winnerPrize };
+                } else {
+                    const result = await this.settleGame(matchId, 'bot_forfeit_winner');
+                    return { forfeited: true, winnerId: 'bot_forfeit_winner', prize: result.winnerPrize };
                 }
-                throw new BadRequestException('Cannot leave an active game without forfeiting');
             }
 
             if (match.status !== MatchStatus.WAITING_OPPONENT) {
@@ -178,26 +185,85 @@ export class MultiplayerService {
     }
 
     async startGame(userId: string, roomId: string) {
-        const match = await this.prisma.multiplayerMatch.findUnique({ where: { id: roomId } });
+        const match = await this.prisma.multiplayerMatch.findUnique({
+            where: { id: roomId },
+            include: { participants: { include: { user: { select: { name: true } } } } }
+        });
 
         if (!match) throw new NotFoundException('Match not found');
         if (match.hostId !== userId) throw new BadRequestException('Only the host can start the game');
         if (match.status !== MatchStatus.WAITING_OPPONENT) throw new BadRequestException('Game already started');
 
-        return this.prisma.multiplayerMatch.update({
+        const needsBotFill = match.participants.length === 1;
+        const effectivePrizePool = needsBotFill ? match.stakeAmount * 2 : match.prizePool;
+
+        const updatedMatch = await this.prisma.multiplayerMatch.update({
             where: { id: roomId },
-            data: { status: MatchStatus.PLAYING },
-            include: { participants: true }
+            data: {
+                status: MatchStatus.PLAYING,
+                prizePool: effectivePrizePool
+            },
+            include: { participants: { include: { user: { select: { name: true } } } } }
         });
+
+        const allParticipants: any[] = [...updatedMatch.participants];
+
+        if (needsBotFill) {
+            const botsToCreate = Math.max(1, updatedMatch.maxPlayers - allParticipants.length);
+            const usedNames = new Set<string>();
+            for (let i = 0; i < botsToCreate; i++) {
+                let botName = pickBotName();
+                while (usedNames.has(botName)) {
+                    botName = pickBotName();
+                }
+                usedNames.add(botName);
+                const botUserId = `bot_${i + 1}_${botName}`;
+                allParticipants.push({
+                    id: `bot_part_${i + 1}`,
+                    matchId: roomId,
+                    userId: botUserId,
+                    isBot: true,
+                    user: { name: botName }
+                });
+            }
+        }
+
+        return {
+            ...updatedMatch,
+            participants: allParticipants
+        };
     }
 
     async settleGame(roomId: string, winnerId: string) {
         return this.prisma.$transaction(async (tx) => {
             const match = await tx.multiplayerMatch.findUnique({ where: { id: roomId } });
             if (!match) throw new NotFoundException('Match not found');
+
+            const isBotWinner = winnerId.startsWith('bot_');
+
             if (match.status === MatchStatus.SETTLED) {
-                const existingPrize = match.prizePool - Math.floor(match.prizePool * 0.15);
-                return { winnerPrize: existingPrize };
+                const existingPrize = isBotWinner ? 0 : match.prizePool - Math.floor(match.prizePool * 0.15);
+                return { winnerPrize: existingPrize, isBotWinner };
+            }
+
+            if (isBotWinner) {
+                await tx.multiplayerMatch.update({
+                    where: { id: roomId },
+                    data: { status: 'SETTLED', winnerId: null, updatedAt: new Date() }
+                });
+
+                await tx.transaction.create({
+                    data: {
+                        userId: match.hostId,
+                        amount: match.stakeAmount,
+                        type: 'PLATFORM_PROFIT',
+                        status: 'COMPLETED',
+                        reference: `MULTI-BOTWIN-${roomId}`,
+                        description: `Bot won multiplayer ${match.gameType} match`,
+                    }
+                });
+
+                return { winnerPrize: 0, isBotWinner: true };
             }
 
             const platformRake = Math.floor(match.prizePool * 0.15);
@@ -223,7 +289,7 @@ export class MultiplayerService {
                 }
             });
 
-            return { winnerPrize };
+            return { winnerPrize, isBotWinner: false };
         });
     }
 }
