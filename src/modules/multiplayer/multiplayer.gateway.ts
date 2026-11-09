@@ -13,6 +13,8 @@ import { MonopolyService } from './games/monopoly.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { GameType } from '@prisma/client';
 
+const PRIVATE_ROOM_EXPIRY_MS = 5 * 60 * 1000;
+
 @WebSocketGateway({ cors: { origin: '*' } })
 export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
@@ -23,6 +25,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
   private rateLimits = new Map<string, { count: number; resetAt: number }>();
   private botMatchmakingTimers = new Map<string, NodeJS.Timeout>();
   private botTurnTimers = new Map<string, NodeJS.Timeout>();
+  private roomExpiryTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(
     private jwtService: JwtService,
@@ -39,6 +42,27 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
     return Boolean(userId && userId.startsWith('bot_'));
   }
 
+  private scheduleRoomExpiry(matchId: string) {
+    const existing = this.roomExpiryTimers.get(matchId);
+    if (existing) clearTimeout(existing);
+
+    const timer = setTimeout(async () => {
+      this.roomExpiryTimers.delete(matchId);
+      try {
+        const res = await this.multiplayerService.expireRoomAndRefund(matchId);
+        if (res.expired) {
+          this.server.to(matchId).emit('room_cancelled', {
+            matchId,
+            reason: 'expired',
+            message: res.message
+          });
+        }
+      } catch { }
+    }, PRIVATE_ROOM_EXPIRY_MS);
+
+    this.roomExpiryTimers.set(matchId, timer);
+  }
+
   private clearMatchTimers(matchId: string) {
     const mmTimer = this.botMatchmakingTimers.get(matchId);
     if (mmTimer) {
@@ -49,6 +73,11 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
     if (turnTimer) {
       clearTimeout(turnTimer);
       this.botTurnTimers.delete(matchId);
+    }
+    const expTimer = this.roomExpiryTimers.get(matchId);
+    if (expTimer) {
+      clearTimeout(expTimer);
+      this.roomExpiryTimers.delete(matchId);
     }
     this.turnDeadlines.delete(matchId);
   }
@@ -142,6 +171,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
         client.data.userId, payload.gameType, payload.stakeAmount, payload.maxPlayers
       );
       client.join(match.id);
+      this.scheduleRoomExpiry(match.id);
       client.emit('room_created', { match });
     } catch (e) {
       this.handleWsError(client, e);
@@ -187,6 +217,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
       }
 
       if (isNew) {
+        this.scheduleRoomExpiry(match.id);
         client.emit('room_created', { match });
         const timer = setTimeout(async () => {
           this.botMatchmakingTimers.delete(match.id);
@@ -224,7 +255,8 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
       if (result.forfeited) {
         this.server.to(payload.matchId).emit('game_over', { winnerId: result.winnerId, prize: result.prize, reason: 'opponent_forfeited' });
       } else if (result.cancelled) {
-        this.server.to(payload.matchId).emit('room_cancelled', { message: result.message });
+        client.emit('room_cancelled', { matchId: payload.matchId, message: result.message });
+        this.server.to(payload.matchId).emit('room_cancelled', { matchId: payload.matchId, message: result.message });
       } else {
         this.server.to(payload.matchId).emit('player_left', { match: result.match });
       }
@@ -264,8 +296,35 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
   async handleReconnect(@ConnectedSocket() client: Socket, @MessageBody() payload: { matchId: string }) {
     if (!this.checkRateLimit(client)) return;
     try {
-      const match = await this.prisma.multiplayerMatch.findUnique({ where: { id: payload.matchId } });
-      if (!match) throw new Error('Match not found');
+      const match = await this.prisma.multiplayerMatch.findUnique({
+        where: { id: payload.matchId },
+        include: { participants: { include: { user: { select: { name: true } } } } }
+      });
+
+      if (!match || match.status === 'EXPIRED_REFUNDED' || match.status === 'SETTLED') {
+        client.emit('room_cancelled', {
+          matchId: payload.matchId,
+          reason: 'closed',
+          message: 'This room is no longer active.'
+        });
+        return;
+      }
+
+      if (match.status === 'WAITING_OPPONENT') {
+        const ageMs = Date.now() - new Date(match.createdAt).getTime();
+        if (ageMs >= PRIVATE_ROOM_EXPIRY_MS) {
+          const res = await this.multiplayerService.expireRoomAndRefund(payload.matchId);
+          client.emit('room_cancelled', {
+            matchId: payload.matchId,
+            reason: 'expired',
+            message: res.message
+          });
+          return;
+        }
+        client.join(payload.matchId);
+        client.emit('room_created', { match });
+        return;
+      }
 
       client.join(payload.matchId);
 
@@ -275,7 +334,15 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
       else if (match.gameType === 'LUDO') gameState = this.ludoService.getGameState(payload.matchId);
       else if (match.gameType === 'MONOPOLY') gameState = this.monopolyService.getGameState(payload.matchId);
 
-      if (!gameState) throw new Error('Active game state not found');
+      if (!gameState) {
+        await this.multiplayerService.expireRoomAndRefund(payload.matchId, true);
+        client.emit('room_cancelled', {
+          matchId: payload.matchId,
+          reason: 'expired',
+          message: 'Match session expired and your stake has been refunded.'
+        });
+        return;
+      }
 
       const turnDeadline = this.turnDeadlines.get(payload.matchId) || null;
       client.emit('resync_state', { matchId: payload.matchId, gameType: match.gameType, gameState, turnDeadline });
@@ -294,6 +361,11 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
     if (mmTimer) {
       clearTimeout(mmTimer);
       this.botMatchmakingTimers.delete(matchId);
+    }
+    const expTimer = this.roomExpiryTimers.get(matchId);
+    if (expTimer) {
+      clearTimeout(expTimer);
+      this.roomExpiryTimers.delete(matchId);
     }
 
     const match = await this.multiplayerService.startGame(hostUserId, matchId);
@@ -650,7 +722,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
             this.server.to(matchId).emit('ludo_state_update', {
               players: afterMove.players,
               currentTurnUserId: afterMove.currentTurnUserId,
-              turnDeadline: nextDeadline,
+              turnDeadline,
               hasRolled: afterMove.hasRolled,
               lastMove: afterMove.lastMove
             });
@@ -669,7 +741,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
       if (winnerId) {
         this.clearMatchTimers(matchId);
         const result = await this.multiplayerService.settleGame(matchId, winnerId);
-        this.server.to(matchId).emit('game_over', { winnerId, prize: result.winnerPrize, isBotWinner: result.isBotWinner });
+        this.server.to(payloadMatchId(matchId)).emit('game_over', { winnerId, prize: result.winnerPrize, isBotWinner: result.isBotWinner });
         return;
       }
 
@@ -693,4 +765,8 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
       this.botTurnTimers.set(matchId, finishTimer);
     }
   }
+}
+
+function payloadMatchId(matchId: string) {
+  return matchId;
 }
