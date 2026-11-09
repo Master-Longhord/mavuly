@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { CampaignsService } from './campaigns.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -22,10 +22,20 @@ export class CampaignsController {
         return this.campaignsService.getDeveloperDashboardStats(developerId);
     }
 
-    @Public()
-    @Get('active')
-    getActiveCampaigns() {
-        return this.campaignsService.getActiveCampaigns();
+    @Roles(AccountType.DEVELOPER)
+    @Get('analytics')
+    getAnalytics(@CurrentUser('id') developerId: string) {
+        return this.campaignsService.getDeveloperAnalytics(developerId);
+    }
+
+    @Roles(AccountType.DEVELOPER)
+    @Get('results')
+    getResults(
+        @CurrentUser('id') developerId: string,
+        @Query('days') days?: string,
+        @Query('campaignId') campaignId?: string
+    ) {
+        return this.campaignsService.getDeveloperResults(developerId, days ? Number(days) : 30, campaignId);
     }
 
     @Roles(AccountType.DEVELOPER)
@@ -35,14 +45,14 @@ export class CampaignsController {
     }
 
     @Public()
+    @Get('active')
+    getActiveCampaigns() {
+        return this.campaignsService.getActiveCampaigns();
+    }
+
+    @Public()
     @Get(':id')
     getCampaignById(@Param('id') campaignId: string) {
         return this.campaignsService.getCampaignById(campaignId);
-    }
-
-    @Roles(AccountType.DEVELOPER)
-    @Get('analytics')
-    getAnalytics(@CurrentUser('id') developerId: string) {
-        return this.campaignsService.getDeveloperAnalytics(developerId);
     }
 }

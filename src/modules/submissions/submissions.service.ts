@@ -150,18 +150,43 @@ export class SubmissionsService {
         });
     }
 
-    async getDeveloperSubmissions(developerId: string) {
-        return this.prisma.taskSubmission.findMany({
-            where: {
-                campaign: { developerId }
-            },
-            include: {
-                campaign: { select: { title: true, appName: true, rewardPerTask: true } },
-                feedback: true,
-                tester: { select: { name: true, email: true } }
-            },
-            orderBy: { startedAt: 'desc' },
-        });
+    async getDeveloperSubmissions(developerId: string, page: number = 1, limit: number = 20, campaignId?: string) {
+        const safePage = Math.max(1, Number(page) || 1);
+        const safeLimit = Math.max(1, Math.min(100, Number(limit) || 20));
+        const skip = (safePage - 1) * safeLimit;
+
+        const where = {
+            campaign: { developerId },
+            ...(campaignId ? { campaignId } : {})
+        };
+
+        const [items, total] = await Promise.all([
+            this.prisma.taskSubmission.findMany({
+                where,
+                include: {
+                    campaign: { select: { title: true, appName: true, rewardPerTask: true } },
+                    feedback: true,
+                    tester: { select: { name: true, email: true } }
+                },
+                orderBy: { startedAt: 'desc' },
+                skip,
+                take: safeLimit,
+            }),
+            this.prisma.taskSubmission.count({ where })
+        ]);
+
+        const totalPages = Math.ceil(total / safeLimit);
+
+        return {
+            data: items,
+            items,
+            meta: {
+                total,
+                page: safePage,
+                limit: safeLimit,
+                totalPages
+            }
+        };
     }
 
     async verifyPostback(apiKey: string, dto: VerifyPostbackDto) {
