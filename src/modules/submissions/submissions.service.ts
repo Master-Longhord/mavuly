@@ -150,14 +150,22 @@ export class SubmissionsService {
         });
     }
 
-    async getDeveloperSubmissions(developerId: string, page: number = 1, limit: number = 20, campaignId?: string) {
+    async getDeveloperSubmissions(
+        developerId: string,
+        page: number = 1,
+        limit: number = 20,
+        campaignId?: string,
+        foundBug?: string
+    ) {
         const safePage = Math.max(1, Number(page) || 1);
         const safeLimit = Math.max(1, Math.min(100, Number(limit) || 20));
         const skip = (safePage - 1) * safeLimit;
 
-        const where = {
+        const where: any = {
             campaign: { developerId },
-            ...(campaignId ? { campaignId } : {})
+            ...(campaignId ? { campaignId } : {}),
+            ...(foundBug === 'true' ? { feedback: { is: { foundBug: true } } } : {}),
+            ...(foundBug === 'false' ? { feedback: { is: { foundBug: false } } } : {})
         };
 
         const [items, total] = await Promise.all([
