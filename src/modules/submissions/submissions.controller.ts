@@ -48,13 +48,15 @@ export class SubmissionsController {
         @CurrentUser('id') developerId: string,
         @Query('page') page?: string,
         @Query('limit') limit?: string,
-        @Query('campaignId') campaignId?: string
+        @Query('campaignId') campaignId?: string,
+        @Query('foundBug') foundBug?: string
     ) {
         return this.submissionsService.getDeveloperSubmissions(
             developerId,
             page ? Number(page) : 1,
             limit ? Number(limit) : 20,
-            campaignId
+            campaignId,
+            foundBug
         );
     }
 
