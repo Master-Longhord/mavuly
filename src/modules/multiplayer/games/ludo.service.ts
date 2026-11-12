@@ -13,6 +13,7 @@ export interface LudoLastMove {
     tokenId: number;
     from: number;
     to: number;
+    distance: number;
     captured: { userId: string; tokenId: number }[];
     bonusRoll: boolean;
     finishedTokenIds: number[];
@@ -29,8 +30,10 @@ export interface LudoGameState {
     matchId: string;
     players: LudoPlayer[];
     currentTurnUserId: string;
-    lastDiceRoll: number | null;
+    lastDiceRoll: [number, number] | null;
+    availableMoves: number[];
     hasRolled: boolean;
+    bonusRollEarned: boolean;
     lastMove: LudoLastMove | null;
 }
 
@@ -72,7 +75,9 @@ export class LudoService {
             players,
             currentTurnUserId: userIds[0]!,
             lastDiceRoll: null,
+            availableMoves: [],
             hasRolled: false,
+            bonusRollEarned: false,
             lastMove: null,
         };
 
@@ -87,31 +92,40 @@ export class LudoService {
     rollDice(matchId: string, userId: string) {
         const game = this.activeGames.get(matchId);
         if (!game || game.currentTurnUserId !== userId) throw new WsException('Not your turn');
-        if (game.hasRolled) throw new WsException('You already rolled the dice! Please move a token.');
+        if (game.hasRolled && game.availableMoves.length > 0) {
+            throw new WsException('You have pending moves! Please move a token.');
+        }
 
-        const roll = Math.floor(Math.random() * 6) + 1;
-        game.lastDiceRoll = roll;
+        const d1 = Math.floor(Math.random() * 6) + 1;
+        const d2 = Math.floor(Math.random() * 6) + 1;
+
+        game.lastDiceRoll = [d1, d2];
+        game.availableMoves = [d1, d2];
         game.hasRolled = true;
+        game.bonusRollEarned = (d1 === d2);
 
         const player = game.players.find(p => p.userId === userId);
         if (!player) throw new WsException('Player not found');
 
-        const movableTokenIds = player.tokens
-            .filter(t => (t.position === 0 && roll === 6) || (t.position > 0 && t.position + roll <= 57))
-            .map(t => t.id);
+        const movableByDistance = this.getMovableByDistance(player, game.availableMoves);
 
-        if (movableTokenIds.length === 0) {
-            this.nextTurn(game);
-            return { game, roll, skipped: true, movableTokenIds: [] };
+        if (Object.keys(movableByDistance).length === 0) {
+            this.handleTurnEnd(game);
+            return { game, roll: [d1, d2], skipped: true, movableByDistance: {} };
         }
 
-        return { game, roll, skipped: false, movableTokenIds };
+        return { game, roll: [d1, d2], skipped: false, movableByDistance };
     }
 
-    moveToken(matchId: string, userId: string, tokenId: number) {
+    moveToken(matchId: string, userId: string, tokenId: number, distance: number) {
         const game = this.activeGames.get(matchId);
         if (!game || game.currentTurnUserId !== userId) throw new WsException('Not your turn');
-        if (!game.hasRolled || !game.lastDiceRoll) throw new WsException('You must roll the dice first');
+        if (!game.hasRolled || game.availableMoves.length === 0) throw new WsException('You must roll the dice first');
+
+        const moveIndex = game.availableMoves.indexOf(distance);
+        if (moveIndex === -1) {
+            throw new WsException(`Invalid move distance. Available moves: [${game.availableMoves.join(', ')}]`);
+        }
 
         const player = game.players.find(p => p.userId === userId);
         if (!player) throw new WsException('Player not found');
@@ -119,18 +133,18 @@ export class LudoService {
         const token = player.tokens.find(t => t.id === tokenId);
         if (!token) throw new WsException('Token not found');
 
-        const roll = game.lastDiceRoll;
         const from = token.position;
         let to = from;
 
         if (from === 0) {
-            if (roll !== 6) throw new WsException('You need a 6 to move a token out of base');
+            if (distance !== 6) throw new WsException('You need a 6 to move a token out of base');
             to = 1;
         } else {
-            if (from + roll > 57) throw new WsException('Invalid move, needs exact roll to finish');
-            to = from + roll;
+            if (from + distance > 57) throw new WsException('Invalid move, needs exact roll to finish');
+            to = from + distance;
         }
 
+        game.availableMoves.splice(moveIndex, 1);
         token.position = to;
 
         const captured: { userId: string; tokenId: number }[] = [];
@@ -153,43 +167,76 @@ export class LudoService {
 
         const finishedTokenIds = player.tokens.filter(t => t.position === 57).map(t => t.id);
         const hasWon = finishedTokenIds.length === 4;
-        const reachedHomeThisMove = from < 57 && to === 57;
-        const bonusRoll = !hasWon && (roll === 6 || captured.length > 0 || reachedHomeThisMove);
+
+        if (captured.length > 0 || (from < 57 && to === 57)) {
+            game.bonusRollEarned = true;
+        }
 
         game.lastMove = {
             userId,
             tokenId,
             from,
             to,
+            distance,
             captured,
-            bonusRoll,
+            bonusRoll: game.bonusRollEarned && game.availableMoves.length === 0,
             finishedTokenIds,
         };
 
         if (hasWon) {
             game.hasRolled = false;
-            game.lastDiceRoll = null;
-            return { game, winnerId: userId };
+            game.availableMoves = [];
+            return { game, winnerId: userId, movableByDistance: {} };
         }
 
-        if (bonusRoll) {
-            game.hasRolled = false;
-            game.lastDiceRoll = null;
-        } else {
-            this.nextTurn(game);
+        const nextMovable = this.getMovableByDistance(player, game.availableMoves);
+        if (game.availableMoves.length === 0 || Object.keys(nextMovable).length === 0) {
+            game.availableMoves = [];
+            this.handleTurnEnd(game);
         }
 
-        return { game, winnerId: null };
+        return { game, winnerId: null, movableByDistance: nextMovable };
+    }
+
+    private getMovableByDistance(player: LudoPlayer, availableMoves: number[]): Record<number, number[]> {
+        const result: Record<number, number[]> = {};
+
+        for (const move of new Set(availableMoves)) {
+            result[move] = [];
+            for (const token of player.tokens) {
+                if (token.position === 0) {
+                    if (move === 6) result[move]!.push(token.id);
+                } else {
+                    if (token.position + move <= 57) {
+                        result[move]!.push(token.id);
+                    }
+                }
+            }
+            if (result[move]!.length === 0) {
+                delete result[move];
+            }
+        }
+
+        return result;
     }
 
     private getGlobalPosition(startOffset: number, relativePos: number): number {
         return (relativePos - 1 + startOffset) % 52;
     }
 
-    private nextTurn(game: LudoGameState) {
-        const currentIndex = game.players.findIndex(p => p.userId === game.currentTurnUserId);
-        game.currentTurnUserId = game.players[(currentIndex + 1) % game.players.length]!.userId;
-        game.hasRolled = false;
-        game.lastDiceRoll = null;
+    private handleTurnEnd(game: LudoGameState) {
+        if (game.bonusRollEarned) {
+            game.hasRolled = false;
+            game.lastDiceRoll = null;
+            game.availableMoves = [];
+            game.bonusRollEarned = false;
+        } else {
+            const currentIndex = game.players.findIndex(p => p.userId === game.currentTurnUserId);
+            game.currentTurnUserId = game.players[(currentIndex + 1) % game.players.length]!.userId;
+            game.hasRolled = false;
+            game.lastDiceRoll = null;
+            game.availableMoves = [];
+            game.bonusRollEarned = false;
+        }
     }
 }
