@@ -105,7 +105,7 @@ model User {
   accountType        AccountType      @default(TESTER) @map("account_type")
   name               String?          // Used for Tester Name
   studioName         String?          @map("studio_name") // Used for Developer Studio Name
-  phone              String?
+  phone              String?          @unique
   country            String?
   dob                DateTime?        // Date of Birth
   notifications      Boolean          @default(true)
@@ -172,6 +172,9 @@ model User {
   tileMatchesToday   Int              @default(0) @map("tile_matches_today")
   questClaimsDate    String?          @map("quest_claims_date") // Stored as "YYYY-MM-DD"
   questClaims        String[]         @default([]) @map("quest_claims")
+
+  hackathonParticipant HackathonParticipant? @relation("UserHackathonParticipant")
+  hackathonEntries     HackathonEntry[]      @relation("UserHackathonEntries")
 
   @@map("users")
 }
@@ -426,4 +429,30 @@ model MatchParticipant {
 
   @@unique([matchId, userId]) // Prevents a user from joining the same room twice
   @@map("match_participants")
+}
+
+model HackathonEntry {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  teamName    String   @map("team_name")
+  projectName String   @map("project_name")
+  description String   @db.Text
+  videoUrl    String   @map("video_url")
+  githubUrl   String?  @map("github_url")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user        User     @relation("UserHackathonEntries", fields: [userId], references: [id])
+  
+  @@map("hackathon_entries")
+}
+
+model HackathonParticipant {
+  id        String   @id @default(uuid())
+  userId    String   @unique @map("user_id")
+  joinedAt  DateTime @default(now()) @map("joined_at")
+  
+  user      User     @relation("UserHackathonParticipant", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("hackathon_participants")
 }

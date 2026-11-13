@@ -19,6 +19,7 @@ import { RolesGuard } from './common/guards/roles.guard';
 import { MailModule } from './modules/mail/mail.module';
 import { SupportModule } from './modules/support/support.module';
 import { MultiplayerModule } from './modules/multiplayer/multiplayer.module';
+import { HackathonModule } from './modules/hackathon/hackathon.module';
 
 @Injectable()
 export class HttpThrottlerGuard extends ThrottlerGuard {
@@ -50,6 +51,7 @@ export class HttpThrottlerGuard extends ThrottlerGuard {
     MailModule,
     SupportModule,
     MultiplayerModule,
+    HackathonModule,
   ],
   controllers: [AppController],
   providers: [

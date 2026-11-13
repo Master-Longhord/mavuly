@@ -11,3 +11,20 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+
+  minio:
+    image: coollabsio/minio:latest
+    container_name: mavuly-storage
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: mavulyadmin
+      MINIO_ROOT_PASSWORD: mavulypassword2026
+    ports:
+      - "9000:9000" # API Port
+      - "9001:9001" # Web UI Port
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+
+volumes:
+  minio_data:
