@@ -214,9 +214,8 @@ export class IdentityService {
             });
 
             return {
-                status: 'claimed',
-                reward: quest.reward,
-                questId,
+                message: 'Quest reward claimed.',
+                coinsAwarded: quest.reward,
                 newBalance: updatedUser.coinBalance,
             };
         });

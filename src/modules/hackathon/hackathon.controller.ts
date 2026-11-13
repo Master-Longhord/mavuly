@@ -1,8 +1,11 @@
-import { Controller, Post, Get, Body, Req, Query, UnauthorizedException } from '@nestjs/common';
+import { Controller, Post, Get, Body, Req, Query, Headers, UnauthorizedException, UseGuards } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HackathonService } from './hackathon.service';
 import { Public } from '../../common/decorators/public.decorator';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { Throttle } from '@nestjs/throttler';
 
+@UseGuards(JwtAuthGuard)
 @Controller('hackathon')
 export class HackathonController {
     constructor(
@@ -17,7 +20,7 @@ export class HackathonController {
 
     @Post('upload-url')
     async getUploadUrl(@Req() req: any, @Body() body: { contentType: string; extension: string }) {
-        return this.hackathonService.generatePresignedUrl(req.user.id, body.contentType, body.extension);
+        return this.hackathonService.generateUploadPolicy(req.user.id, body.contentType, body.extension);
     }
 
     @Post('register')
@@ -30,19 +33,23 @@ export class HackathonController {
 
     @Get('my-entry')
     async getMyEntry(@Req() req: any) {
-        return this.hackathonService.getMyEntry(req.user.id);
+        return this.hackathonService.getMyEntryStatus(req.user.id);
     }
 
-    // --- TEAM BACKDOOR / MAGIC KEY ENDPOINT ---
     @Public()
+    @Throttle({ default: { limit: 10, ttl: 60000 } })
     @Get('participants')
-    async getParticipants(@Query('team_key') teamKey: string) {
+    async getParticipants(
+        @Headers('x-team-key') teamKey: string,
+        @Query('page') page: string = '1',
+        @Query('limit') limit: string = '20'
+    ) {
         const expectedKey = this.configService.get<string>('HACKATHON_TEAM_KEY') || 'mavuly_rocks_2026';
 
         if (!teamKey || teamKey !== expectedKey) {
             throw new UnauthorizedException('Invalid team key. Access denied.');
         }
 
-        return this.hackathonService.getAdminParticipants();
+        return this.hackathonService.getAdminParticipants(Number(page), Number(limit));
     }
 }
