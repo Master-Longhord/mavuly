@@ -68,7 +68,8 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
           this.server.to(matchId).emit('room_cancelled', {
             matchId,
             reason: 'expired',
-            message: res.message
+            message: res.message,
+            serverTime: Date.now()
           });
         }
       } catch { }
@@ -105,7 +106,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
       return true;
     }
     if (record.count >= 8) {
-      client.emit('error', { message: 'Too many actions. Please slow down.' });
+      client.emit('error', { message: 'Too many actions. Please slow down.', serverTime: Date.now() });
       return false;
     }
     record.count++;
@@ -123,7 +124,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
       if (this.isBotUser(player.userId)) continue;
       for (const [socketId, uid] of this.connectedUsers.entries()) {
         if (uid === player.userId) {
-          this.server.to(socketId).emit('receive_cards', { hand: player.hand });
+          this.server.to(socketId).emit('receive_cards', { hand: player.hand, serverTime: Date.now() });
         }
       }
     }
@@ -132,7 +133,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
   private handleWsError(client: Socket, e: unknown): never {
     const err = e as any;
     const message = err?.message || 'WebSocket action failed';
-    client.emit('error', { message });
+    client.emit('error', { message, serverTime: Date.now() });
     throw new WsException(message);
   }
 
@@ -169,7 +170,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
     if (!this.checkRateLimit(client)) return;
     try {
       const match = await this.multiplayerService.getRoomInfo(payload.roomCode, this.getActiveMemoryMatchIds());
-      client.emit('room_info_data', { match });
+      client.emit('room_info_data', { match, serverTime: Date.now() });
     } catch (e) {
       this.handleWsError(client, e);
     }
@@ -192,7 +193,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
       );
       client.join(match.id);
       this.scheduleRoomExpiry(match.id);
-      client.emit('room_created', { match });
+      client.emit('room_created', { match, serverTime: Date.now() });
     } catch (e) {
       this.handleWsError(client, e);
     }
@@ -217,7 +218,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
         this.botMatchmakingTimers.delete(match.id);
       }
       client.join(match.id);
-      this.server.to(match.id).emit('player_joined', { match });
+      this.server.to(match.id).emit('player_joined', { match, serverTime: Date.now() });
     } catch (e) {
       this.handleWsError(client, e);
     }
@@ -241,14 +242,14 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
       client.join(match.id);
 
       if (payload.vsBot) {
-        client.emit('room_created', { match });
+        client.emit('room_created', { match, serverTime: Date.now() });
         await this.launchMatchAndBroadcast(client.data.userId, match.id);
         return;
       }
 
       if (isNew) {
         this.scheduleRoomExpiry(match.id);
-        client.emit('room_created', { match });
+        client.emit('room_created', { match, serverTime: Date.now() });
         const timer = setTimeout(async () => {
           this.botMatchmakingTimers.delete(match.id);
           try {
@@ -268,7 +269,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
           clearTimeout(mmTimer);
           this.botMatchmakingTimers.delete(match.id);
         }
-        this.server.to(match.id).emit('player_joined', { match });
+        this.server.to(match.id).emit('player_joined', { match, serverTime: Date.now() });
       }
     } catch (e) {
       this.handleWsError(client, e);
@@ -288,13 +289,14 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
           winnerId: result.winnerId,
           prize: result.prize,
           reason: 'opponent_forfeited',
-          playedAgainstBot
+          playedAgainstBot,
+          serverTime: Date.now()
         });
       } else if (result.cancelled) {
-        client.emit('room_cancelled', { matchId: payload.matchId, reason: 'cancelled', message: result.message });
-        this.server.to(payload.matchId).emit('room_cancelled', { matchId: payload.matchId, reason: 'cancelled', message: result.message });
+        client.emit('room_cancelled', { matchId: payload.matchId, reason: 'cancelled', message: result.message, serverTime: Date.now() });
+        this.server.to(payload.matchId).emit('room_cancelled', { matchId: payload.matchId, reason: 'cancelled', message: result.message, serverTime: Date.now() });
       } else {
-        this.server.to(payload.matchId).emit('player_left', { match: result.match });
+        this.server.to(payload.matchId).emit('player_left', { match: result.match, serverTime: Date.now() });
       }
     } catch (e) {
       this.handleWsError(client, e);
@@ -323,7 +325,8 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
         winnerId: client.data.userId,
         prize: result.winnerPrize,
         reason: 'afk_forfeit',
-        playedAgainstBot
+        playedAgainstBot,
+        serverTime: Date.now()
       });
     } catch (e) {
       this.handleWsError(client, e);
@@ -345,7 +348,8 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
         client.emit('room_cancelled', {
           matchId: payload.matchId,
           reason: rawMatch?.status === 'SETTLED' ? 'settled' : 'expired',
-          message: 'This room is no longer active.'
+          message: 'This room is no longer active.',
+          serverTime: Date.now()
         });
         return;
       }
@@ -357,20 +361,22 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
           client.emit('room_cancelled', {
             matchId: payload.matchId,
             reason: 'expired',
-            message: res.message
+            message: res.message,
+            serverTime: Date.now()
           });
           return;
         }
         const formattedMatch = this.multiplayerService.formatMatch(rawMatch);
         client.join(payload.matchId);
-        client.emit('room_created', { match: formattedMatch });
+        client.emit('room_created', { match: formattedMatch, serverTime: Date.now() });
         client.emit('resync_state', {
           matchId: payload.matchId,
           gameType: rawMatch.gameType,
           status: 'WAITING_OPPONENT',
           match: formattedMatch,
           gameState: null,
-          turnDeadline: null
+          turnDeadline: null,
+          serverTime: Date.now()
         });
         return;
       }
@@ -383,7 +389,8 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
         client.emit('room_cancelled', {
           matchId: payload.matchId,
           reason: 'expired',
-          message: 'Match session expired and your stake has been refunded.'
+          message: 'Match session expired and your stake has been refunded.',
+          serverTime: Date.now()
         });
         return;
       }
@@ -401,12 +408,13 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
         status: 'PLAYING',
         match: formattedMatch,
         gameState,
-        turnDeadline
+        turnDeadline,
+        serverTime: Date.now()
       });
 
       if (rawMatch.gameType === 'WHOT' || rawMatch.gameType === 'UNO') {
         const player = gameState.players.find((p: any) => p.userId === client.data.userId);
-        if (player) client.emit('receive_cards', { hand: player.hand });
+        if (player) client.emit('receive_cards', { hand: player.hand, serverTime: Date.now() });
       }
     } catch (e) {
       this.handleWsError(client, e);
@@ -430,7 +438,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
     const userIds = (match as any).participants.map((p: any) => p.userId);
 
     if ((match as any).participants.some((p: any) => p.isBot)) {
-      this.server.to(matchId).emit('player_joined', { match });
+      this.server.to(matchId).emit('player_joined', { match, serverTime: Date.now() });
     }
 
     let gameState: any;
@@ -454,7 +462,8 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
         currentTurnUserId: gameState.currentTurnUserId,
         turnDeadline,
         participants: match.participants,
-        gameState
+        gameState,
+        serverTime: Date.now()
       });
     } else {
       const topCard = gameState.playedCards[gameState.playedCards.length - 1];
@@ -466,7 +475,8 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
         activeShape: gameState.activeShape || gameState.activeColor,
         direction: gameState.playDirection ?? 1,
         participants: match.participants,
-        playerCardCounts: gameState.players.map((p: any) => ({ userId: p.userId, count: p.hand.length }))
+        playerCardCounts: gameState.players.map((p: any) => ({ userId: p.userId, count: p.hand.length })),
+        serverTime: Date.now()
       });
 
       this.emitHandsToAllPlayers(gameState.players);
@@ -522,7 +532,8 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
         winnerId,
         prize: result.winnerPrize,
         isBotWinner: result.isBotWinner,
-        playedAgainstBot
+        playedAgainstBot,
+        serverTime: Date.now()
       });
     } else {
       const turnDeadline = this.setTurnDeadline(matchId);
@@ -534,7 +545,8 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
         activeShape: game.activeShape || game.activeColor,
         direction: game.playDirection ?? 1,
         playerCardCounts: game.players.map((p: any) => ({ userId: p.userId, count: p.hand.length })),
-        lastPlay: game.lastPlay
+        lastPlay: game.lastPlay,
+        serverTime: Date.now()
       });
 
       this.scheduleBotTurnIfNeeded(matchId, gameType, game.currentTurnUserId);
@@ -576,7 +588,8 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
       activeShape: game.activeShape || game.activeColor,
       direction: game.playDirection ?? 1,
       playerCardCounts: game.players.map((p: any) => ({ userId: p.userId, count: p.hand.length })),
-      lastPlay: game.lastPlay
+      lastPlay: game.lastPlay,
+      serverTime: Date.now()
     });
 
     this.scheduleBotTurnIfNeeded(matchId, gameType, game.currentTurnUserId);
@@ -592,14 +605,15 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
       const turnDeadline = this.setTurnDeadline(payload.matchId);
 
       if (match.gameType === 'LUDO') {
-        const { game, roll, skipped, movableTokenIds } = this.ludoService.rollDice(payload.matchId, client.data.userId);
+        const { game, roll, skipped, movableByDistance } = this.ludoService.rollDice(payload.matchId, client.data.userId);
         this.server.to(payload.matchId).emit('dice_rolled', {
           userId: client.data.userId,
           roll,
           skipped,
-          movableTokenIds,
+          movableByDistance,
           turnDeadline,
-          currentTurnUserId: game.currentTurnUserId
+          currentTurnUserId: game.currentTurnUserId,
+          serverTime: Date.now()
         });
 
         if (skipped) {
@@ -608,7 +622,8 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
             currentTurnUserId: game.currentTurnUserId,
             turnDeadline,
             hasRolled: game.hasRolled,
-            lastMove: null
+            lastMove: null,
+            serverTime: Date.now()
           });
           this.scheduleBotTurnIfNeeded(payload.matchId, 'LUDO', game.currentTurnUserId);
         }
@@ -622,10 +637,11 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
             winnerId,
             prize: result.winnerPrize,
             isBotWinner: result.isBotWinner,
-            playedAgainstBot
+            playedAgainstBot,
+            serverTime: Date.now()
           });
         } else {
-          this.server.to(payload.matchId).emit('monopoly_state_update', { gameState: game, turnDeadline });
+          this.server.to(payload.matchId).emit('monopoly_state_update', { gameState: game, turnDeadline, serverTime: Date.now() });
           this.scheduleBotTurnIfNeeded(payload.matchId, 'MONOPOLY', game.currentTurnUserId);
         }
       }
@@ -635,10 +651,10 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
   }
 
   @SubscribeMessage('move_token')
-  async handleMoveToken(@ConnectedSocket() client: Socket, @MessageBody() payload: { matchId: string, tokenId: number }) {
+  async handleMoveToken(@ConnectedSocket() client: Socket, @MessageBody() payload: { matchId: string, tokenId: number, distance: number }) {
     if (!this.checkRateLimit(client)) return;
     try {
-      const { game, winnerId } = this.ludoService.moveToken(payload.matchId, client.data.userId, payload.tokenId);
+      const { game, winnerId, movableByDistance } = this.ludoService.moveToken(payload.matchId, client.data.userId, payload.tokenId, payload.distance);
 
       if (winnerId) {
         const playedAgainstBot = (this.matchParticipantsCache.get(payload.matchId) || []).some(p => p.isBot);
@@ -649,7 +665,8 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
           prize: result.winnerPrize,
           lastMove: game.lastMove,
           isBotWinner: result.isBotWinner,
-          playedAgainstBot
+          playedAgainstBot,
+          serverTime: Date.now()
         });
       } else {
         const turnDeadline = this.setTurnDeadline(payload.matchId);
@@ -658,7 +675,9 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
           currentTurnUserId: game.currentTurnUserId,
           turnDeadline,
           hasRolled: game.hasRolled,
-          lastMove: game.lastMove
+          lastMove: game.lastMove,
+          movableByDistance,
+          serverTime: Date.now()
         });
         this.scheduleBotTurnIfNeeded(payload.matchId, 'LUDO', game.currentTurnUserId);
       }
@@ -673,7 +692,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
     try {
       const { game } = this.monopolyService.buyProperty(payload.matchId, client.data.userId);
       const turnDeadline = this.setTurnDeadline(payload.matchId);
-      this.server.to(payload.matchId).emit('monopoly_state_update', { gameState: game, turnDeadline });
+      this.server.to(payload.matchId).emit('monopoly_state_update', { gameState: game, turnDeadline, serverTime: Date.now() });
     } catch (e) {
       this.handleWsError(client, e);
     }
@@ -685,7 +704,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
     try {
       const { game } = this.monopolyService.endTurn(payload.matchId, client.data.userId);
       const turnDeadline = this.setTurnDeadline(payload.matchId);
-      this.server.to(payload.matchId).emit('monopoly_state_update', { gameState: game, turnDeadline });
+      this.server.to(payload.matchId).emit('monopoly_state_update', { gameState: game, turnDeadline, serverTime: Date.now() });
       this.scheduleBotTurnIfNeeded(payload.matchId, 'MONOPOLY', game.currentTurnUserId);
     } catch (e) {
       this.handleWsError(client, e);
@@ -759,62 +778,62 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
       const state = this.ludoService.getGameState(matchId);
       if (!state || state.currentTurnUserId !== botUserId) return;
 
-      const { game, roll, skipped, movableTokenIds } = this.ludoService.rollDice(matchId, botUserId);
-      const turnDeadline = this.setTurnDeadline(matchId);
+      const executeMove = async (currentState: any) => {
+        let chosenTokenId: number | undefined;
+        let chosenDistance: number | undefined;
 
-      this.server.to(matchId).emit('dice_rolled', {
-        userId: botUserId,
-        roll,
-        skipped,
-        movableTokenIds,
-        turnDeadline,
-        currentTurnUserId: game.currentTurnUserId
-      });
-
-      if (skipped || movableTokenIds.length === 0) {
-        this.server.to(matchId).emit('ludo_state_update', {
-          players: game.players,
-          currentTurnUserId: game.currentTurnUserId,
-          turnDeadline,
-          hasRolled: game.hasRolled,
-          lastMove: null
-        });
-        this.scheduleBotTurnIfNeeded(matchId, 'LUDO', game.currentTurnUserId);
-        return;
-      }
-
-      const moveTimer = setTimeout(async () => {
-        try {
-          const botPlayer = game.players.find(p => p.userId === botUserId);
-          const bringOutToken = botPlayer?.tokens.find(t => movableTokenIds.includes(t.id) && t.position === 0);
-          const chosenTokenId = bringOutToken ? bringOutToken.id : movableTokenIds[0]!;
-
-          const { game: afterMove, winnerId } = this.ludoService.moveToken(matchId, botUserId, chosenTokenId);
-          if (winnerId) {
-            const playedAgainstBot = (this.matchParticipantsCache.get(matchId) || []).some(p => p.isBot);
-            this.clearMatchTimers(matchId);
-            const result = await this.multiplayerService.settleGame(matchId, winnerId);
-            this.server.to(matchId).emit('game_over', {
-              winnerId,
-              prize: result.winnerPrize,
-              lastMove: afterMove.lastMove,
-              isBotWinner: result.isBotWinner,
-              playedAgainstBot
-            });
-          } else {
-            const nextDeadline = this.setTurnDeadline(matchId);
-            this.server.to(matchId).emit('ludo_state_update', {
-              players: afterMove.players,
-              currentTurnUserId: afterMove.currentTurnUserId,
-              turnDeadline,
-              hasRolled: afterMove.hasRolled,
-              lastMove: afterMove.lastMove
-            });
-            this.scheduleBotTurnIfNeeded(matchId, 'LUDO', afterMove.currentTurnUserId);
+        if (currentState.movableByDistance) {
+          const distances = Object.keys(currentState.movableByDistance).map(Number);
+          if (distances.length > 0) {
+            chosenDistance = distances[0];
+            chosenTokenId = currentState.movableByDistance[chosenDistance]![0];
           }
-        } catch { }
-      }, 900);
-      this.botTurnTimers.set(matchId, moveTimer);
+        }
+
+        if (!chosenTokenId || !chosenDistance) return;
+
+        const { game: afterMove, winnerId, movableByDistance } = this.ludoService.moveToken(matchId, botUserId, chosenTokenId, chosenDistance);
+        if (winnerId) {
+          const playedAgainstBot = (this.matchParticipantsCache.get(matchId) || []).some(p => p.isBot);
+          this.clearMatchTimers(matchId);
+          const result = await this.multiplayerService.settleGame(matchId, winnerId);
+          this.server.to(matchId).emit('game_over', {
+            winnerId, prize: result.winnerPrize, lastMove: afterMove.lastMove, isBotWinner: result.isBotWinner, playedAgainstBot, serverTime: Date.now()
+          });
+        } else {
+          const nextDeadline = this.setTurnDeadline(matchId);
+          this.server.to(matchId).emit('ludo_state_update', {
+            players: afterMove.players, currentTurnUserId: afterMove.currentTurnUserId,
+            turnDeadline: nextDeadline, hasRolled: afterMove.hasRolled, lastMove: afterMove.lastMove,
+            movableByDistance, serverTime: Date.now()
+          });
+          this.scheduleBotTurnIfNeeded(matchId, 'LUDO', afterMove.currentTurnUserId);
+        }
+      };
+
+      if (state.hasRolled && state.availableMoves.length > 0) {
+        const moveTimer = setTimeout(() => executeMove(state), 900);
+        this.botTurnTimers.set(matchId, moveTimer);
+      } else {
+        const { game, roll, skipped, movableByDistance } = this.ludoService.rollDice(matchId, botUserId);
+        const turnDeadline = this.setTurnDeadline(matchId);
+
+        this.server.to(matchId).emit('dice_rolled', {
+          userId: botUserId, roll, skipped, movableByDistance, turnDeadline, currentTurnUserId: game.currentTurnUserId, serverTime: Date.now()
+        });
+
+        if (skipped || Object.keys(movableByDistance).length === 0) {
+          this.server.to(matchId).emit('ludo_state_update', {
+            players: game.players, currentTurnUserId: game.currentTurnUserId,
+            turnDeadline, hasRolled: game.hasRolled, lastMove: null, serverTime: Date.now()
+          });
+          this.scheduleBotTurnIfNeeded(matchId, 'LUDO', game.currentTurnUserId);
+          return;
+        }
+
+        const moveTimer = setTimeout(() => executeMove(game), 900);
+        this.botTurnTimers.set(matchId, moveTimer);
+      }
     } else if (gameType === 'MONOPOLY') {
       const state = this.monopolyService.getGameState(matchId);
       if (!state || state.currentTurnUserId !== botUserId) return;
@@ -830,12 +849,13 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
           winnerId,
           prize: result.winnerPrize,
           isBotWinner: result.isBotWinner,
-          playedAgainstBot
+          playedAgainstBot,
+          serverTime: Date.now()
         });
         return;
       }
 
-      this.server.to(matchId).emit('monopoly_state_update', { gameState: game, turnDeadline });
+      this.server.to(matchId).emit('monopoly_state_update', { gameState: game, turnDeadline, serverTime: Date.now() });
 
       const finishTimer = setTimeout(() => {
         try {
@@ -848,7 +868,7 @@ export class MultiplayerGateway implements OnGatewayConnection, OnGatewayDisconn
           }
           const { game: afterEnd } = this.monopolyService.endTurn(matchId, botUserId);
           const nextDeadline = this.setTurnDeadline(matchId);
-          this.server.to(matchId).emit('monopoly_state_update', { gameState: afterEnd, turnDeadline: nextDeadline });
+          this.server.to(matchId).emit('monopoly_state_update', { gameState: afterEnd, turnDeadline: nextDeadline, serverTime: Date.now() });
           this.scheduleBotTurnIfNeeded(matchId, 'MONOPOLY', afterEnd.currentTurnUserId);
         } catch { }
       }, 1000);
