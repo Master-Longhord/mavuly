@@ -96,4 +96,63 @@ export class MailService {
             console.error('Failed to send contact form email to Admin:', error);
         }
     }
+
+    async sendHackathonWelcomeEmail(email: string, name: string) {
+        const fromEmail = this.configService.get<string>('FROM_EMAIL') || 'updates@mavuly.com';
+
+        const mailOptions = {
+            from: `"Mavuly Hackathon" <${fromEmail}>`,
+            to: email,
+            subject: 'Welcome to the MAVULY HACKATHON 2026! 🎮',
+            html: `
+                <div style="font-family: Arial, sans-serif; padding: 20px;">
+                    <h2>Hello ${name},</h2>
+                    <p>You have successfully registered for the <strong>Mavuly Hackathon 2026!</strong></p>
+                    <p>Your skills deserve an audience. Your creation deserves an opportunity.</p>
+                    <h3>Next Steps:</h3>
+                    <ul>
+                        <li>Create your Developer Profile.</li>
+                        <li>Submit your game or application (including your Demo Video) by <strong>November 20, 2026</strong>.</li>
+                    </ul>
+                    <p>Submit your project here: <a href="https://mavuly.com/hackathon/submit">https://mavuly.com/hackathon/submit</a></p>
+                    <p>Build it. Submit it. Get discovered.</p>
+                    <p>- The Mavuly Team</p>
+                </div>
+            `,
+        };
+
+        try {
+            const info = await this.transporter.sendMail(mailOptions);
+            console.log(`✅ BREVO SUCCESS: Hackathon welcome email sent to ${email} (Message ID: ${info.messageId})`);
+        } catch (error) {
+            console.error('❌ BREVO ERROR:', error);
+        }
+    }
+
+    async sendHackathonSubmissionEmail(email: string, name: string, projectName: string) {
+        const fromEmail = this.configService.get<string>('FROM_EMAIL') || 'updates@mavuly.com';
+
+        const mailOptions = {
+            from: `"Mavuly Hackathon" <${fromEmail}>`,
+            to: email,
+            subject: `Submission Received: ${projectName} 🚀`,
+            html: `
+                <div style="font-family: Arial, sans-serif; padding: 20px;">
+                    <h2>Congratulations ${name},</h2>
+                    <p>We have officially received your final project submission: <strong>${projectName}</strong>!</p>
+                    <p>Our team will review your application. Get ready to showcase your creation and attract real users.</p>
+                    <p>Participant onboarding begins on <strong>November 22, 2026</strong>, and the Hackathon officially begins on <strong>November 23, 2026</strong>.</p>
+                    <p>Keep an eye on your inbox for the next steps.</p>
+                    <p>- The Mavuly Team</p>
+                </div>
+            `,
+        };
+
+        try {
+            const info = await this.transporter.sendMail(mailOptions);
+            console.log(`✅ BREVO SUCCESS: Hackathon submission email sent to ${email} (Message ID: ${info.messageId})`);
+        } catch (error) {
+            console.error('❌ BREVO ERROR:', error);
+        }
+    }
 }

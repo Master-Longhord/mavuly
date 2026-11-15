@@ -4,6 +4,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { S3Client } from '@aws-sdk/client-s3';
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
 import { v4 as uuidv4 } from 'uuid';
+import { MailService } from '../mail/mail.service';
 
 @Injectable()
 export class HackathonService {
@@ -12,6 +13,7 @@ export class HackathonService {
     constructor(
         private prisma: PrismaService,
         private configService: ConfigService,
+        private mailService: MailService,
     ) {
         let endpoint = this.configService.get<string>('MINIO_ENDPOINT');
         if (endpoint && endpoint.endsWith('/')) {
@@ -38,7 +40,20 @@ export class HackathonService {
             throw new BadRequestException('You have already joined the hackathon.');
         }
 
-        await this.prisma.hackathonParticipant.create({ data: { userId } });
+        const participant = await this.prisma.hackathonParticipant.create({
+            data: { userId },
+            include: { user: true }
+        });
+
+        try {
+            await this.mailService.sendHackathonWelcomeEmail(
+                participant.user.email,
+                participant.user.name || 'Developer'
+            );
+        } catch (error) {
+            console.error('Failed to send hackathon welcome email:', error);
+        }
+
         return { success: true, message: 'Successfully joined the hackathon' };
     }
 
@@ -105,14 +120,17 @@ export class HackathonService {
     }
 
     async registerEntry(userId: string, data: { teamName: string; projectName: string; description: string; videoUrl: string; githubUrl?: string }) {
-        const participant = await this.prisma.hackathonParticipant.findUnique({ where: { userId } });
+        const participant = await this.prisma.hackathonParticipant.findUnique({
+            where: { userId },
+            include: { user: true }
+        });
         if (!participant) throw new BadRequestException('You must join the hackathon first.');
 
         const existingEntry = await this.prisma.hackathonEntry.findFirst({ where: { userId } });
         if (existingEntry) throw new ConflictException('You have already submitted a hackathon project.');
 
-        const deadline = new Date('2026-12-31T23:59:59Z');
-        if (new Date() > deadline) throw new BadRequestException('The hackathon submission deadline has passed.');
+        const deadline = new Date('2026-11-20T23:59:59Z');
+        if (new Date() > deadline) throw new BadRequestException('The hackathon submission deadline has passed (Nov 20, 2026).');
 
         if (data.teamName.length < 2 || data.teamName.length > 60) throw new BadRequestException('Team name must be 2-60 characters.');
         if (data.projectName.length < 2 || data.projectName.length > 80) throw new BadRequestException('Project name must be 2-80 characters.');
@@ -126,7 +144,7 @@ export class HackathonService {
             throw new BadRequestException('Invalid video URL ownership. You can only submit videos you uploaded.');
         }
 
-        return this.prisma.hackathonEntry.create({
+        const entry = await this.prisma.hackathonEntry.create({
             data: {
                 userId,
                 teamName: data.teamName,
@@ -136,5 +154,17 @@ export class HackathonService {
                 githubUrl: data.githubUrl,
             },
         });
+
+        try {
+            await this.mailService.sendHackathonSubmissionEmail(
+                participant.user.email,
+                participant.user.name || 'Developer',
+                data.projectName
+            );
+        } catch (error) {
+            console.error('Failed to send hackathon submission email:', error);
+        }
+
+        return entry;
     }
 }
