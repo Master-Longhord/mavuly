@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Req, Query, Headers, UnauthorizedException, UseGuards } from '@nestjs/common';
+import { Controller, Post, Get, Body, Req, Query, Headers, UnauthorizedException, UseGuards, Redirect } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HackathonService } from './hackathon.service';
 import { Public } from '../../common/decorators/public.decorator';
@@ -10,7 +10,7 @@ import { Throttle } from '@nestjs/throttler';
 export class HackathonController {
     constructor(
         private readonly hackathonService: HackathonService,
-        private readonly configService: ConfigService
+        private readonly configService: ConfigService,
     ) { }
 
     @Post('join')
@@ -19,14 +19,22 @@ export class HackathonController {
     }
 
     @Post('upload-url')
-    async getUploadUrl(@Req() req: any, @Body() body: { contentType: string; extension: string }) {
-        return this.hackathonService.generateUploadPolicy(req.user.id, body.contentType, body.extension);
+    async getUploadUrl(@Req() req: any, @Body() body: { contentType: string; extension?: string }) {
+        return this.hackathonService.generateUploadPolicy(req.user.id, body.contentType);
     }
 
     @Post('register')
     async register(
         @Req() req: any,
-        @Body() body: { teamName: string; projectName: string; description: string; videoUrl: string; githubUrl?: string }
+        @Body()
+        body: {
+            teamName: string;
+            projectName: string;
+            description: string;
+            videoUrl?: string;
+            pitchDeckUrl?: string;
+            githubUrl?: string;
+        },
     ) {
         return this.hackathonService.registerEntry(req.user.id, body);
     }
@@ -42,7 +50,7 @@ export class HackathonController {
     async getParticipants(
         @Headers('x-team-key') teamKey: string,
         @Query('page') page: string = '1',
-        @Query('limit') limit: string = '20'
+        @Query('limit') limit: string = '20',
     ) {
         const expectedKey = this.configService.get<string>('HACKATHON_TEAM_KEY') || 'mavuly_rocks_2026';
 
@@ -51,5 +59,13 @@ export class HackathonController {
         }
 
         return this.hackathonService.getAdminParticipants(Number(page), Number(limit));
+    }
+
+    @Public()
+    @Get('whatsapp')
+    @Redirect()
+    getWhatsappLink() {
+        const url = this.configService.get<string>('WHATSAPP_GROUP_LINK') || 'https://chat.whatsapp.com/ClwFijiQ7Y8BBs7X04K81k';
+        return { url, statusCode: 302 };
     }
 }

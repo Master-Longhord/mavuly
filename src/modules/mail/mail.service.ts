@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
+import * as path from 'path';
+import * as fs from 'fs';
 
 @Injectable()
 export class MailService {
@@ -10,7 +12,7 @@ export class MailService {
         this.transporter = nodemailer.createTransport({
             host: this.configService.get<string>('SMTP_HOST'),
             port: this.configService.get<number>('SMTP_PORT'),
-            secure: this.configService.get<number>('SMTP_PORT') === 465, // true for 465, false for 587
+            secure: this.configService.get<number>('SMTP_PORT') === 465,
             auth: {
                 user: this.configService.get<string>('SMTP_USER'),
                 pass: this.configService.get<string>('SMTP_PASS'),
@@ -97,28 +99,44 @@ export class MailService {
         }
     }
 
-    async sendHackathonWelcomeEmail(email: string, name: string) {
+    async sendHackathonWelcomeEmail(email: string, name: string, whatsappLink: string) {
         const fromEmail = this.configService.get<string>('FROM_EMAIL') || 'updates@mavuly.com';
+        const pdfPath = path.join(process.cwd(), 'mavuly.pdf');
+        const attachments = fs.existsSync(pdfPath)
+            ? [{ filename: 'Mavuly-Hackathon-Guide.pdf', path: pdfPath, contentType: 'application/pdf' }]
+            : [];
 
         const mailOptions = {
             from: `"Mavuly Hackathon" <${fromEmail}>`,
             to: email,
             subject: 'Welcome to the MAVULY HACKATHON 2026! 🎮',
             html: `
-                <div style="font-family: Arial, sans-serif; padding: 20px;">
+                <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto;">
                     <h2>Hello ${name},</h2>
                     <p>You have successfully registered for the <strong>Mavuly Hackathon 2026!</strong></p>
                     <p>Your skills deserve an audience. Your creation deserves an opportunity.</p>
+                    
+                    <div style="background-color: #f3f4f6; padding: 15px; border-left: 4px solid #10b981; margin: 20px 0;">
+                        <h3 style="margin-top: 0; color: #10b981;">⚠️ REQUIRED: Join the Official WhatsApp Group</h3>
+                        <p>All hackathon announcements, support, and updates will be communicated exclusively through our WhatsApp community.</p>
+                        <a href="${whatsappLink}" style="display: inline-block; background-color: #25D366; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 10px;">Join WhatsApp Group Now</a>
+                    </div>
+
                     <h3>Next Steps:</h3>
                     <ul>
+                        <li>Review the attached <strong>Mavuly Hackathon Guide PDF</strong>.</li>
+                        <li>Join the WhatsApp group above.</li>
                         <li>Create your Developer Profile.</li>
-                        <li>Submit your game or application (including your Demo Video) by <strong>November 20, 2026</strong>.</li>
+                        <li>Submit your game or application with your Pitch Deck (PDF/DOC/DOCX) or Demo Video by <strong>November 20, 2026</strong>.</li>
                     </ul>
+                    
                     <p>Submit your project here: <a href="https://mavuly.com/hackathon/submit">https://mavuly.com/hackathon/submit</a></p>
+                    
                     <p>Build it. Submit it. Get discovered.</p>
                     <p>- The Mavuly Team</p>
                 </div>
             `,
+            attachments,
         };
 
         try {
@@ -137,12 +155,12 @@ export class MailService {
             to: email,
             subject: `Submission Received: ${projectName} 🚀`,
             html: `
-                <div style="font-family: Arial, sans-serif; padding: 20px;">
+                <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto;">
                     <h2>Congratulations ${name},</h2>
                     <p>We have officially received your final project submission: <strong>${projectName}</strong>!</p>
                     <p>Our team will review your application. Get ready to showcase your creation and attract real users.</p>
                     <p>Participant onboarding begins on <strong>November 22, 2026</strong>, and the Hackathon officially begins on <strong>November 23, 2026</strong>.</p>
-                    <p>Keep an eye on your inbox for the next steps.</p>
+                    <p>Keep an eye on the WhatsApp group for the next steps.</p>
                     <p>- The Mavuly Team</p>
                 </div>
             `,
