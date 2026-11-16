@@ -126,7 +126,6 @@ export class HackathonService {
             Key: fileKey,
             Conditions: [
                 ['content-length-range', 1, 314572800],
-                ['eq', '$Content-Type', contentType],
             ],
             Fields: {
                 'Content-Type': contentType,
