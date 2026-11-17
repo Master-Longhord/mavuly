@@ -48,14 +48,16 @@ export class HackathonController {
     @Throttle({ default: { limit: 10, ttl: 60000 } })
     @Get('participants')
     async getParticipants(
-        @Headers('x-team-key') teamKey: string,
+        @Headers('x-team-key') teamKey?: string,
+        @Query('team_key') queryTeamKey?: string,
         @Query('page') page: string = '1',
         @Query('limit') limit: string = '20',
     ) {
         const expectedKey = this.configService.get<string>('HACKATHON_TEAM_KEY') || 'mavuly_rocks_2026';
+        const providedKey = teamKey || queryTeamKey;
 
-        if (!teamKey || teamKey !== expectedKey) {
-            throw new UnauthorizedException('Invalid team key. Access denied.');
+        if (!providedKey || providedKey !== expectedKey) {
+            throw new UnauthorizedException('Invalid team key.');
         }
 
         return this.hackathonService.getAdminParticipants(Number(page), Number(limit));

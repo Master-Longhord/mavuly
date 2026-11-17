@@ -79,12 +79,15 @@ export class HackathonService {
         return { joined: !!participant, entry };
     }
 
-    async getAdminParticipants(page: number, limit: number) {
-        const skip = (page - 1) * limit;
+    async getAdminParticipants(page: number = 1, limit: number = 20) {
+        const safePage = Math.max(1, Number(page) || 1);
+        const safeLimit = Math.max(1, Math.min(100, Number(limit) || 20));
+        const skip = (safePage - 1) * safeLimit;
+
         const [items, total] = await Promise.all([
             this.prisma.hackathonParticipant.findMany({
                 skip,
-                take: limit,
+                take: safeLimit,
                 orderBy: { joinedAt: 'desc' },
                 include: { user: { select: { name: true, email: true, phone: true } } },
             }),
@@ -92,15 +95,19 @@ export class HackathonService {
         ]);
 
         const data = items.map(item => ({
-            name: item.user.name,
-            email: item.user.email,
-            phone: item.user.phone,
+            name: item.user?.name ?? null,
+            email: item.user?.email ?? null,
+            phone: item.user?.phone ?? null,
             joinedAt: item.joinedAt,
         }));
 
         return {
             data,
-            meta: { total, page, totalPages: Math.ceil(total / limit) },
+            meta: {
+                total,
+                page: safePage,
+                totalPages: Math.max(1, Math.ceil(total / safeLimit)),
+            },
         };
     }
 
