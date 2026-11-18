@@ -49,6 +49,11 @@ export class HackathonService {
             throw new BadRequestException('You have already joined the hackathon.');
         }
 
+        const registrationDeadline = new Date('2026-11-20T23:59:59+01:00');
+        if (new Date() > registrationDeadline) {
+            throw new BadRequestException('Hackathon registration closed on November 20, 2026 (11:59 PM WAT).');
+        }
+
         const participant = await this.prisma.hackathonParticipant.create({
             data: { userId },
             include: { user: true },
@@ -89,7 +94,7 @@ export class HackathonService {
         for (const item of participants) {
             if (!item.user?.email) continue;
             try {
-                await this.mailService.sendHackathonWelcomeEmail(
+                await this.mailService.sendHackathonScheduleUpdateEmail(
                     item.user.email,
                     item.user.name || 'Developer',
                     whatsappLink,
@@ -103,7 +108,7 @@ export class HackathonService {
 
         return {
             success: true,
-            message: 'Hackathon WhatsApp broadcast completed.',
+            message: 'Hackathon schedule update & WhatsApp broadcast completed.',
             totalParticipants: participants.length,
             emailsSent,
             failed,
@@ -201,9 +206,9 @@ export class HackathonService {
         const existingEntry = await this.prisma.hackathonEntry.findFirst({ where: { userId } });
         if (existingEntry) throw new ConflictException('You have already submitted a hackathon project.');
 
-        const deadline = new Date('2026-11-20T23:59:59Z');
-        if (new Date() > deadline) {
-            throw new BadRequestException('The hackathon submission deadline has passed (Nov 20, 2026).');
+        const submissionDeadline = new Date('2026-11-29T23:59:59+01:00');
+        if (new Date() > submissionDeadline) {
+            throw new BadRequestException('The hackathon submission deadline has passed (Nov 29, 2026 at 11:59 PM WAT).');
         }
 
         if (!data.teamName || data.teamName.length < 2 || data.teamName.length > 60) {
