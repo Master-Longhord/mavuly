@@ -73,6 +73,43 @@ export class HackathonService {
         };
     }
 
+    async broadcastWhatsappEmailToAllParticipants() {
+        const participants = await this.prisma.hackathonParticipant.findMany({
+            include: {
+                user: {
+                    select: { email: true, name: true },
+                },
+            },
+        });
+
+        const whatsappLink = `https://api.mavuly.com/api/v1/hackathon/whatsapp`;
+        let emailsSent = 0;
+        let failed = 0;
+
+        for (const item of participants) {
+            if (!item.user?.email) continue;
+            try {
+                await this.mailService.sendHackathonWelcomeEmail(
+                    item.user.email,
+                    item.user.name || 'Developer',
+                    whatsappLink,
+                );
+                emailsSent++;
+            } catch (error) {
+                console.error(`Failed to send broadcast email to ${item.user.email}:`, error);
+                failed++;
+            }
+        }
+
+        return {
+            success: true,
+            message: 'Hackathon WhatsApp broadcast completed.',
+            totalParticipants: participants.length,
+            emailsSent,
+            failed,
+        };
+    }
+
     async getMyEntryStatus(userId: string) {
         const participant = await this.prisma.hackathonParticipant.findUnique({ where: { userId } });
         const entry = await this.prisma.hackathonEntry.findFirst({ where: { userId } });
