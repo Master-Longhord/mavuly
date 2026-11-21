@@ -4,7 +4,7 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { Role } from '@prisma/client';
 
 @Controller('admin')
-@Roles(Role.ADMIN) // This protects EVERY endpoint in this file!
+@Roles(Role.ADMIN)
 export class AdminController {
     constructor(private readonly adminService: AdminService) { }
 
@@ -16,6 +16,11 @@ export class AdminController {
     @Get('users')
     getAllUsers() {
         return this.adminService.getAllUsers();
+    }
+
+    @Get('referrals')
+    getReferralLeaderboard() {
+        return this.adminService.getReferralLeaderboard();
     }
 
     @Get('campaigns')
