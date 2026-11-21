@@ -22,7 +22,71 @@ export class AuthService {
         private mailService: MailService,
     ) { }
 
-    // --- REGISTRATION & LOGIN ---
+    private async generateUniqueReferralCode(seedName: string): Promise<string> {
+        const cleaned = (seedName || 'USR').toUpperCase().replace(/[^A-Z]/g, '');
+        const baseName = (cleaned + 'USR').substring(0, 3);
+
+        for (let i = 0; i < 5; i++) {
+            const candidate = `${baseName}${Math.floor(1000 + Math.random() * 9000)}`;
+            const exists = await this.prisma.user.findUnique({ where: { referralCode: candidate } });
+            if (!exists) return candidate;
+        }
+
+        return `${baseName}${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+    }
+
+    private async creditReferralRewardsIfEligible(referredUserId: string, referredUserName: string, referredById: string | null) {
+        if (!referredById || referredById === referredUserId) return;
+
+        const referrerTxRef = `REF-${referredUserId}`;
+        const inviteeTxRef = `REF-WELCOME-${referredUserId}`;
+
+        const existingTx = await this.prisma.transaction.findUnique({ where: { reference: referrerTxRef } });
+        if (existingTx) return;
+
+        await this.prisma.$transaction([
+            this.prisma.user.update({
+                where: { id: referredById },
+                data: { coinBalance: { increment: 100 } },
+            }),
+            this.prisma.transaction.create({
+                data: {
+                    userId: referredById,
+                    amount: 100,
+                    type: 'REFERRAL_BONUS',
+                    status: 'COMPLETED',
+                    reference: referrerTxRef,
+                    description: `Referral bonus for inviting ${referredUserName}`,
+                },
+            }),
+            this.prisma.notification.create({
+                data: {
+                    userId: referredById,
+                    message: `🎉 ${referredUserName} joined Mavuly using your referral link! You earned +100 KudiCoins.`,
+                },
+            }),
+            this.prisma.user.update({
+                where: { id: referredUserId },
+                data: { coinBalance: { increment: 50 } },
+            }),
+            this.prisma.transaction.create({
+                data: {
+                    userId: referredUserId,
+                    amount: 50,
+                    type: 'REFERRAL_BONUS',
+                    status: 'COMPLETED',
+                    reference: inviteeTxRef,
+                    description: 'Referral welcome bonus for joining via an invite link',
+                },
+            }),
+            this.prisma.notification.create({
+                data: {
+                    userId: referredUserId,
+                    message: '🎁 Welcome bonus! You earned +50 KudiCoins for joining Mavuly via a referral link.',
+                },
+            }),
+        ]);
+    }
 
     async register(dto: RegisterDto) {
         const existingUser = await this.prisma.user.findUnique({
@@ -33,16 +97,13 @@ export class AuthService {
         }
 
         const hashedPassword = await argon2.hash(dto.password);
-        const verificationCode = Math.floor(100000 + Math.random() * 900000).toString(); // 6 digit code
+        const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+        const newReferralCode = await this.generateUniqueReferralCode(dto.name);
 
-        console.log(`\n 🚀 DEV MODE - VERIFICATION CODE FOR ${dto.email}: ${verificationCode}\n`);
-
-        const baseName = dto.name.substring(0, 3).toUpperCase().replace(/[^A-Z]/g, 'USR');
-        const newReferralCode = `${baseName}${Math.floor(1000 + Math.random() * 9000)}`;
-
-        let referredById = null;
+        let referredById: string | null = null;
         if (dto.referredByCode) {
-            const referrer = await this.prisma.user.findUnique({ where: { referralCode: dto.referredByCode } });
+            const normalizedCode = dto.referredByCode.trim().toUpperCase();
+            const referrer = await this.prisma.user.findUnique({ where: { referralCode: normalizedCode } });
             if (referrer) referredById = referrer.id;
         }
 
@@ -53,7 +114,7 @@ export class AuthService {
                 accountType: dto.accountType,
                 name: dto.name,
                 phone: dto.phone,
-                coinBalance: 200,
+                coinBalance: 0,
                 emailVerifyToken: verificationCode,
                 isEmailVerified: false,
                 referralCode: newReferralCode,
@@ -61,18 +122,6 @@ export class AuthService {
             },
         });
 
-        await this.prisma.transaction.create({
-            data: {
-                userId: user.id,
-                amount: 200,
-                type: 'REWARD',
-                status: 'COMPLETED',
-                reference: `WELCOME-${user.id}`,
-                description: 'Welcome bonus for joining Mavuly!'
-            }
-        });
-
-        // Send the 6-digit verification code to their email!
         await this.mailService.sendVerificationEmail(user.email, verificationCode);
 
         return this.generateTokens(user);
@@ -107,12 +156,12 @@ export class AuthService {
 
             if (!user) {
                 const randomPassword = await argon2.hash(crypto.randomBytes(32).toString('hex'));
-                const baseName = (name || email).substring(0, 3).toUpperCase().replace(/[^A-Z]/g, 'USR');
-                const newReferralCode = `${baseName}${Math.floor(1000 + Math.random() * 9000)}`;
+                const newReferralCode = await this.generateUniqueReferralCode(name || email);
 
-                let referredById = null;
+                let referredById: string | null = null;
                 if (dto.referredByCode) {
-                    const referrer = await this.prisma.user.findUnique({ where: { referralCode: dto.referredByCode } });
+                    const normalizedCode = dto.referredByCode.trim().toUpperCase();
+                    const referrer = await this.prisma.user.findUnique({ where: { referralCode: normalizedCode } });
                     if (referrer) referredById = referrer.id;
                 }
 
@@ -122,25 +171,14 @@ export class AuthService {
                         name: name || email.split('@')[0],
                         passwordHash: randomPassword,
                         accountType: dto.accountType || 'TESTER',
+                        coinBalance: 0,
                         isEmailVerified: true,
                         referralCode: newReferralCode,
                         referredById,
                     }
                 });
 
-                if (referredById) {
-                    await this.prisma.user.update({ where: { id: referredById }, data: { coinBalance: { increment: 100 } } });
-                    await this.prisma.transaction.create({
-                        data: {
-                            userId: referredById,
-                            amount: 100,
-                            type: 'REFERRAL_BONUS',
-                            status: 'COMPLETED',
-                            reference: `REF-${user.id}`,
-                            description: `Referral bonus for inviting ${user.name}`
-                        }
-                    });
-                }
+                await this.creditReferralRewardsIfEligible(user.id, user.name || user.email, referredById);
             }
 
             return this.generateTokens(user);
@@ -148,8 +186,6 @@ export class AuthService {
             throw new UnauthorizedException('Invalid Google token');
         }
     }
-
-    // --- TOKEN MANAGEMENT (JWT & REFRESH) ---
 
     private async generateTokens(user: any) {
         const payload = {
@@ -169,13 +205,12 @@ export class AuthService {
             expiresIn: '7d',
         });
 
-        // Hash and store the refresh token in the database
         const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
         await this.prisma.refreshToken.create({
             data: {
                 tokenHash,
                 userId: user.id,
-                expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+                expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
             }
         });
 
@@ -193,13 +228,11 @@ export class AuthService {
             throw new UnauthorizedException('Invalid or expired refresh token');
         }
 
-        // Revoke the old token so it can't be used again
         await this.prisma.refreshToken.update({
             where: { id: storedToken.id },
             data: { revoked: true }
         });
 
-        // Issue a fresh pair
         return this.generateTokens(storedToken.user);
     }
 
@@ -211,8 +244,6 @@ export class AuthService {
         });
         return { message: 'Logged out successfully' };
     }
-
-    // --- PASSWORD RESET FLOW ---
 
     async forgotPassword(dto: ForgotPasswordDto) {
         const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
@@ -280,8 +311,6 @@ export class AuthService {
         return { valid: true, message: 'Token is valid' };
     }
 
-    // --- EMAIL VERIFICATION FLOW ---
-
     async verifyEmail(dto: VerifyEmailDto) {
         const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
         if (!user) throw new BadRequestException('Invalid request');
@@ -295,6 +324,8 @@ export class AuthService {
             where: { id: user.id },
             data: { isEmailVerified: true, emailVerifyToken: null }
         });
+
+        await this.creditReferralRewardsIfEligible(user.id, user.name || user.email, user.referredById);
 
         return { message: 'Email verified successfully!' };
     }

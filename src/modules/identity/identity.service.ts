@@ -34,6 +34,15 @@ export class IdentityService {
                 createdAt: true,
                 isEmailVerified: true,
                 referralCode: true,
+                referredById: true,
+                referredBy: {
+                    select: {
+                        id: true,
+                        name: true,
+                        studioName: true,
+                        referralCode: true,
+                    },
+                },
                 businessDocUrl: true,
                 idDocUrl: true,
                 addressDocUrl: true,
@@ -44,7 +53,10 @@ export class IdentityService {
         });
 
         if (!user) throw new NotFoundException('User profile not found');
-        return user;
+        return {
+            ...user,
+            referralLink: user.referralCode ? `https://mavuly.com/register?ref=${user.referralCode}` : null,
+        };
     }
 
     async updateProfile(userId: string, dto: UpdateProfileDto) {
@@ -221,11 +233,135 @@ export class IdentityService {
         });
     }
 
+    async lookupReferrerByCode(code: string) {
+        if (!code || !code.trim()) {
+            throw new BadRequestException('Referral code is required');
+        }
+
+        const normalizedCode = code.trim().toUpperCase();
+        const referrer = await this.prisma.user.findUnique({
+            where: { referralCode: normalizedCode },
+            select: {
+                id: true,
+                name: true,
+                studioName: true,
+                accountType: true,
+                referralCode: true,
+            },
+        });
+
+        if (!referrer) {
+            throw new NotFoundException('Invalid referral code');
+        }
+
+        return {
+            valid: true,
+            referralCode: referrer.referralCode,
+            referrerName: referrer.studioName || referrer.name || 'Mavuly Member',
+            studioName: referrer.studioName,
+            accountType: referrer.accountType,
+            inviteeBonusCoins: 50,
+        };
+    }
+
+    async applyReferralCode(userId: string, referralCode: string) {
+        if (!referralCode || !referralCode.trim()) {
+            throw new BadRequestException('Referral code is required');
+        }
+
+        const normalizedCode = referralCode.trim().toUpperCase();
+        const [user, referrer] = await Promise.all([
+            this.prisma.user.findUnique({ where: { id: userId } }),
+            this.prisma.user.findUnique({ where: { referralCode: normalizedCode } }),
+        ]);
+
+        if (!user) throw new NotFoundException('User not found');
+        if (user.referredById) throw new ConflictException('You have already linked a referrer.');
+        if (!referrer) throw new NotFoundException('Invalid referral code');
+        if (referrer.id === userId) throw new BadRequestException('You cannot refer yourself.');
+
+        await this.prisma.user.update({
+            where: { id: userId },
+            data: { referredById: referrer.id },
+        });
+
+        let coinsAwarded = 0;
+        if (user.isEmailVerified) {
+            const referrerTxRef = `REF-${user.id}`;
+            const inviteeTxRef = `REF-WELCOME-${user.id}`;
+            const existingTx = await this.prisma.transaction.findUnique({ where: { reference: referrerTxRef } });
+
+            if (!existingTx) {
+                await this.prisma.$transaction([
+                    this.prisma.user.update({
+                        where: { id: referrer.id },
+                        data: { coinBalance: { increment: 100 } },
+                    }),
+                    this.prisma.transaction.create({
+                        data: {
+                            userId: referrer.id,
+                            amount: 100,
+                            type: 'REFERRAL_BONUS',
+                            status: 'COMPLETED',
+                            reference: referrerTxRef,
+                            description: `Referral bonus for inviting ${user.name || user.email}`,
+                        },
+                    }),
+                    this.prisma.notification.create({
+                        data: {
+                            userId: referrer.id,
+                            message: `🎉 ${user.name || user.email} linked your referral code! You earned +100 KudiCoins.`,
+                        },
+                    }),
+                    this.prisma.user.update({
+                        where: { id: user.id },
+                        data: { coinBalance: { increment: 50 } },
+                    }),
+                    this.prisma.transaction.create({
+                        data: {
+                            userId: user.id,
+                            amount: 50,
+                            type: 'REFERRAL_BONUS',
+                            status: 'COMPLETED',
+                            reference: inviteeTxRef,
+                            description: `Referral welcome bonus from ${referrer.studioName || referrer.name || 'referrer'}`,
+                        },
+                    }),
+                    this.prisma.notification.create({
+                        data: {
+                            userId: user.id,
+                            message: `🎁 Welcome bonus! You earned +50 KudiCoins for linking ${referrer.studioName || referrer.name || 'a friend'}'s referral code.`,
+                        },
+                    }),
+                ]);
+                coinsAwarded = 50;
+            }
+        }
+
+        return {
+            success: true,
+            message: coinsAwarded > 0
+                ? `Successfully linked to ${referrer.studioName || referrer.name || 'referrer'}! You received +50 KudiCoins.`
+                : `Successfully linked to ${referrer.studioName || referrer.name || 'referrer'}! Verify your email to unlock your +50 KudiCoins bonus.`,
+            coinsAwarded,
+            referredBy: {
+                id: referrer.id,
+                name: referrer.name,
+                studioName: referrer.studioName,
+                referralCode: referrer.referralCode,
+            },
+        };
+    }
+
     async getReferralStats(userId: string) {
         const user = await this.prisma.user.findUnique({
             where: { id: userId },
             include: {
+                referredBy: {
+                    select: { id: true, name: true, studioName: true, referralCode: true }
+                },
                 referrals: {
+                    orderBy: { createdAt: 'desc' },
                     select: { id: true, name: true, createdAt: true, isEmailVerified: true }
                 }
             }
@@ -242,6 +378,7 @@ export class IdentityService {
         const activeReferrals = user.referrals.filter((r) => r.isEmailVerified).length;
 
         const history = user.referrals.map((r) => ({
+            id: r.id,
             name: r.name,
             date: r.createdAt,
             reward: 100,
@@ -250,6 +387,10 @@ export class IdentityService {
 
         return {
             referralCode: user.referralCode,
+            referralLink: user.referralCode ? `https://mavuly.com/register?ref=${user.referralCode}` : null,
+            referredBy: user.referredBy || null,
+            referrerRewardCoins: 100,
+            inviteeRewardCoins: 50,
             totalReferrals: user.referrals.length,
             activeReferrals,
             earnings,

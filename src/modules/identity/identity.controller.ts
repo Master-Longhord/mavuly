@@ -5,6 +5,7 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ClaimQuestDto } from './dto/claim-quest.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UpdatePostbackDto } from './dto/update-postback.dto';
+import { Public } from '../../common/decorators/public.decorator';
 
 @Controller('identity')
 export class IdentityController {
@@ -44,6 +45,20 @@ export class IdentityController {
     @Get('referrals')
     getReferralStats(@CurrentUser('id') userId: string) {
         return this.identityService.getReferralStats(userId);
+    }
+
+    @Public()
+    @Get('referrer/:code')
+    lookupReferrer(@Param('code') code: string) {
+        return this.identityService.lookupReferrerByCode(code);
+    }
+
+    @Post('referrals/apply')
+    applyReferralCode(
+        @CurrentUser('id') userId: string,
+        @Body() body: { referralCode: string },
+    ) {
+        return this.identityService.applyReferralCode(userId, body.referralCode);
     }
 
     @Get('wallet/balances')

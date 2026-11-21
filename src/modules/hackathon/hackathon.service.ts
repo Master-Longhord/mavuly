@@ -75,6 +75,10 @@ export class HackathonService {
             success: true,
             message: 'Successfully joined the hackathon',
             whatsappLink,
+            referralCode: participant.user.referralCode,
+            referralLink: participant.user.referralCode
+                ? `https://mavuly.com/register?ref=${participant.user.referralCode}`
+                : null,
         };
     }
 
@@ -116,9 +120,29 @@ export class HackathonService {
     }
 
     async getMyEntryStatus(userId: string) {
-        const participant = await this.prisma.hackathonParticipant.findUnique({ where: { userId } });
-        const entry = await this.prisma.hackathonEntry.findFirst({ where: { userId } });
-        return { joined: !!participant, entry };
+        const [participant, entry, user] = await Promise.all([
+            this.prisma.hackathonParticipant.findUnique({ where: { userId } }),
+            this.prisma.hackathonEntry.findFirst({ where: { userId } }),
+            this.prisma.user.findUnique({
+                where: { id: userId },
+                select: {
+                    referralCode: true,
+                    referrals: { select: { isEmailVerified: true } },
+                },
+            }),
+        ]);
+
+        const totalReferrals = user?.referrals.length || 0;
+        const verifiedReferrals = user?.referrals.filter(r => r.isEmailVerified).length || 0;
+
+        return {
+            joined: !!participant,
+            entry,
+            referralCode: user?.referralCode || null,
+            referralLink: user?.referralCode ? `https://mavuly.com/register?ref=${user.referralCode}` : null,
+            totalReferrals,
+            verifiedReferrals,
+        };
     }
 
     async getAdminParticipants(page: number = 1, limit: number = 20) {
@@ -131,17 +155,35 @@ export class HackathonService {
                 skip,
                 take: safeLimit,
                 orderBy: { joinedAt: 'desc' },
-                include: { user: { select: { name: true, email: true, phone: true } } },
+                include: {
+                    user: {
+                        select: {
+                            name: true,
+                            email: true,
+                            phone: true,
+                            referralCode: true,
+                            referrals: { select: { isEmailVerified: true } },
+                        },
+                    },
+                },
             }),
             this.prisma.hackathonParticipant.count(),
         ]);
 
-        const data = items.map(item => ({
-            name: item.user?.name ?? null,
-            email: item.user?.email ?? null,
-            phone: item.user?.phone ?? null,
-            joinedAt: item.joinedAt,
-        }));
+        const data = items.map(item => {
+            const referrals = item.user?.referrals || [];
+            const code = item.user?.referralCode ?? null;
+            return {
+                name: item.user?.name ?? null,
+                email: item.user?.email ?? null,
+                phone: item.user?.phone ?? null,
+                joinedAt: item.joinedAt,
+                referralCode: code,
+                referralLink: code ? `https://mavuly.com/register?ref=${code}` : null,
+                totalReferrals: referrals.length,
+                verifiedReferrals: referrals.filter(r => r.isEmailVerified).length,
+            };
+        });
 
         return {
             data,
