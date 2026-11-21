@@ -111,7 +111,7 @@ export class MailService {
             to: email,
             subject: 'Welcome to the MAVULY HACKATHON 2026! 🎮',
             html: `
-                <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto;">
+                <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; color: #1f2937; line-height: 1.6;">
                     <h2>Hello ${name},</h2>
                     <p>You have successfully registered for the <strong>Mavuly Hackathon 2026!</strong></p>
                     <p>Your skills deserve an audience. Your creation deserves an opportunity.</p>
@@ -122,20 +122,20 @@ export class MailService {
                         <a href="${whatsappLink}" style="display: inline-block; background-color: #25D366; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 10px;">Join WhatsApp Group Now</a>
                     </div>
 
-                    <h3>Key Dates (All Times WAT):</h3>
+                    <h3>Key Dates:</h3>
                     <ul>
-                        <li><strong>Registration closes:</strong> Fri, 20 November 2026 (11:59 PM WAT)</li>
-                        <li><strong>Onboarding session:</strong> Sun, 22 November 2026 — Everything you need to know before you start building</li>
-                        <li><strong>Hackathon starts:</strong> Mon, 23 November 2026 — Building window opens</li>
-                        <li><strong>Submissions close:</strong> Sun, 29 November 2026 (11:59 PM WAT) — Repo, demo video &amp; pitch deck must be ready</li>
-                        <li><strong>Winners announced:</strong> Mon, 30 November 2026 — Top 3 entries share the ₦500,000 prize pool</li>
+                        <li><strong>Registration Deadline:</strong> 27 November 2026</li>
+                        <li><strong>Hackathon Commencement:</strong> 30 November 2026</li>
+                        <li><strong>Hackathon Submission Date:</strong> 6 December 2026</li>
                     </ul>
                     
-                    <p>When your project is ready, submit it here before <strong>November 29, 2026 (11:59 PM WAT)</strong>:<br/>
+                    <p>When your project is ready, submit it here by <strong>6 December 2026</strong>:<br/>
                     <a href="https://mavuly.com/hackathon/submit">https://mavuly.com/hackathon/submit</a></p>
                     
                     <p>Build it. Submit it. Get discovered.</p>
-                    <p>- The Mavuly Team</p>
+                    <p>Best regards,<br/>
+                    <strong>The Mavuly Team</strong><br/>
+                    <a href="https://mavuly.com">https://mavuly.com</a></p>
                 </div>
             `,
             attachments,
@@ -159,35 +159,31 @@ export class MailService {
         const mailOptions = {
             from: `"Mavuly Hackathon" <${fromEmail}>`,
             to: email,
-            subject: '📢 Important Update: Mavuly Hackathon 2026 Timeline & WhatsApp Community',
+            subject: 'Important Update: Revised Dates for Mavuly Hackathon 2026',
             html: `
-                <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto;">
-                    <h2>Hello ${name},</h2>
-                    <p>Thank you for registering for the <strong>Mavuly Hackathon 2026!</strong> We are writing to share an important clarification on the official Hackathon schedule and to make sure you have joined the participant WhatsApp group.</p>
+                <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; color: #1f2937; line-height: 1.6;">
+                    <p>Dear ${name || 'Participant'},</p>
+                    <p>Thank you for registering for the <strong>Mavuly Hackathon 2026</strong>.</p>
+                    <p>We would like to inform you of a slight adjustment to the hackathon schedule. Please take note of the revised dates below:</p>
                     
-                    <div style="background-color: #ecfdf5; padding: 15px; border-left: 4px solid #10b981; margin: 20px 0;">
-                        <h3 style="margin-top: 0; color: #065f46;">📌 Schedule Clarification (All Times WAT)</h3>
-                        <p style="margin-bottom: 8px;">Please note that <strong>November 20</strong> is only the deadline for <strong>Registration</strong>. You have until <strong>November 29 (11:59 PM WAT)</strong> to submit your final project!</p>
-                        <ul style="margin-bottom: 0;">
-                            <li><strong>Registration closes:</strong> Nov 20, 2026 (11:59 PM WAT)</li>
-                            <li><strong>Onboarding session:</strong> Nov 22, 2026</li>
-                            <li><strong>Hackathon building starts:</strong> Nov 23, 2026</li>
-                            <li><strong>Final Submissions close:</strong> Nov 29, 2026 (11:59 PM WAT)</li>
-                            <li><strong>Winners announced:</strong> Nov 30, 2026 (₦500,000 Prize Pool)</li>
-                        </ul>
-                    </div>
+                    <ul>
+                        <li><strong>New Registration Deadline:</strong> 27 November 2026</li>
+                        <li><strong>Hackathon Commencement:</strong> 30 November 2026</li>
+                        <li><strong>Hackathon Submission Date:</strong> 6 December 2026</li>
+                    </ul>
+
+                    <p>Please note that your registration remains valid. No further registration is required.</p>
 
                     <div style="background-color: #f3f4f6; padding: 15px; border-left: 4px solid #25D366; margin: 20px 0;">
-                        <h3 style="margin-top: 0; color: #111827;">💬 Join the Official WhatsApp Group</h3>
-                        <p>If you haven't joined yet, click below to join the official participant group for onboarding links, live support, and updates:</p>
-                        <a href="${whatsappLink}" style="display: inline-block; background-color: #25D366; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 10px;">Join WhatsApp Community</a>
+                        <p style="margin-top: 0;">If you haven't joined our official participant WhatsApp community yet, you can join below for live updates:</p>
+                        <a href="${whatsappLink}" style="display: inline-block; background-color: #25D366; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">Join WhatsApp Community</a>
                     </div>
 
-                    <p>We have also attached the official <strong>Mavuly Hackathon Guide PDF</strong> to this email for your reference. When your project, demo video, or pitch deck (PDF/DOC/DOCX) is ready, submit it at:<br/>
-                    <a href="https://mavuly.com/hackathon/submit">https://mavuly.com/hackathon/submit</a></p>
-                    
-                    <p>Build it. Submit it. Get discovered.</p>
-                    <p>- The Mavuly Team</p>
+                    <p>We appreciate your interest in the Mavuly Hackathon and look forward to an exciting experience with you.</p>
+                    <p>Thank you for being part of the Mavuly community.</p>
+                    <p>Best regards,<br/>
+                    <strong>The Mavuly Team</strong><br/>
+                    <a href="https://mavuly.com">https://mavuly.com</a></p>
                 </div>
             `,
             attachments,
@@ -209,17 +205,19 @@ export class MailService {
             to: email,
             subject: `Submission Received: ${projectName} 🚀`,
             html: `
-                <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto;">
+                <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; color: #1f2937; line-height: 1.6;">
                     <h2>Congratulations ${name},</h2>
                     <p>We have officially received your final project submission: <strong>${projectName}</strong>!</p>
                     <p>Our team will review your application. Get ready to showcase your creation and attract real users.</p>
-                    <p><strong>Key Upcoming Dates (WAT):</strong></p>
+                    <p><strong>Key Hackathon Dates:</strong></p>
                     <ul>
-                        <li><strong>Submissions close:</strong> November 29, 2026 (11:59 PM WAT)</li>
-                        <li><strong>Winners announced:</strong> November 30, 2026 (Top 3 entries share the ₦500,000 prize pool)</li>
+                        <li><strong>Hackathon Commencement:</strong> 30 November 2026</li>
+                        <li><strong>Hackathon Submission Date:</strong> 6 December 2026</li>
                     </ul>
                     <p>Keep an eye on the WhatsApp group for updates and next steps.</p>
-                    <p>- The Mavuly Team</p>
+                    <p>Best regards,<br/>
+                    <strong>The Mavuly Team</strong><br/>
+                    <a href="https://mavuly.com">https://mavuly.com</a></p>
                 </div>
             `,
         };
