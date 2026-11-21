@@ -49,9 +49,9 @@ export class HackathonService {
             throw new BadRequestException('You have already joined the hackathon.');
         }
 
-        const registrationDeadline = new Date('2026-11-20T23:59:59+01:00');
+        const registrationDeadline = new Date('2026-11-27T23:59:59+01:00');
         if (new Date() > registrationDeadline) {
-            throw new BadRequestException('Hackathon registration closed on November 20, 2026 (11:59 PM WAT).');
+            throw new BadRequestException('Hackathon registration closed on November 27, 2026 (11:59 PM WAT).');
         }
 
         const participant = await this.prisma.hackathonParticipant.create({
@@ -64,7 +64,7 @@ export class HackathonService {
         try {
             await this.mailService.sendHackathonWelcomeEmail(
                 participant.user.email,
-                participant.user.name || 'Developer',
+                participant.user.name || 'Participant',
                 whatsappLink,
             );
         } catch (error) {
@@ -96,7 +96,7 @@ export class HackathonService {
             try {
                 await this.mailService.sendHackathonScheduleUpdateEmail(
                     item.user.email,
-                    item.user.name || 'Developer',
+                    item.user.name || 'Participant',
                     whatsappLink,
                 );
                 emailsSent++;
@@ -108,7 +108,7 @@ export class HackathonService {
 
         return {
             success: true,
-            message: 'Hackathon schedule update & WhatsApp broadcast completed.',
+            message: 'Revised Hackathon dates broadcast completed.',
             totalParticipants: participants.length,
             emailsSent,
             failed,
@@ -206,9 +206,9 @@ export class HackathonService {
         const existingEntry = await this.prisma.hackathonEntry.findFirst({ where: { userId } });
         if (existingEntry) throw new ConflictException('You have already submitted a hackathon project.');
 
-        const submissionDeadline = new Date('2026-11-29T23:59:59+01:00');
+        const submissionDeadline = new Date('2026-12-06T23:59:59+01:00');
         if (new Date() > submissionDeadline) {
-            throw new BadRequestException('The hackathon submission deadline has passed (Nov 29, 2026 at 11:59 PM WAT).');
+            throw new BadRequestException('The hackathon submission deadline has passed (Dec 6, 2026 at 11:59 PM WAT).');
         }
 
         if (!data.teamName || data.teamName.length < 2 || data.teamName.length > 60) {
@@ -252,7 +252,7 @@ export class HackathonService {
         try {
             await this.mailService.sendHackathonSubmissionEmail(
                 participant.user.email,
-                participant.user.name || 'Developer',
+                participant.user.name || 'Participant',
                 data.projectName,
             );
         } catch (error) {
