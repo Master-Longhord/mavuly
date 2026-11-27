@@ -82,7 +82,7 @@ export class HackathonService {
         };
     }
 
-    async broadcastWhatsappEmailToAllParticipants() {
+    async broadcastOnboardingEmailToAllParticipants() {
         const participants = await this.prisma.hackathonParticipant.findMany({
             include: {
                 user: {
@@ -91,28 +91,23 @@ export class HackathonService {
             },
         });
 
-        const whatsappLink = `https://api.mavuly.com/api/v1/hackathon/whatsapp`;
         let emailsSent = 0;
         let failed = 0;
 
         for (const item of participants) {
             if (!item.user?.email) continue;
             try {
-                await this.mailService.sendHackathonScheduleUpdateEmail(
-                    item.user.email,
-                    item.user.name || 'Participant',
-                    whatsappLink,
-                );
+                await this.mailService.sendHackathonOnboardingEmail(item.user.email);
                 emailsSent++;
             } catch (error) {
-                console.error(`Failed to send broadcast email to ${item.user.email}:`, error);
+                console.error(`Failed to send onboarding email to ${item.user.email}:`, error);
                 failed++;
             }
         }
 
         return {
             success: true,
-            message: 'Revised Hackathon dates broadcast completed.',
+            message: 'Hackathon Sunday 7PM onboarding invite broadcast completed.',
             totalParticipants: participants.length,
             emailsSent,
             failed,
