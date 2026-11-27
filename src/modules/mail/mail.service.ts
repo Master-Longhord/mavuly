@@ -149,49 +149,33 @@ export class MailService {
         }
     }
 
-    async sendHackathonScheduleUpdateEmail(email: string, name: string, whatsappLink: string) {
+    async sendHackathonOnboardingEmail(email: string) {
         const fromEmail = this.configService.get<string>('FROM_EMAIL') || 'updates@mavuly.com';
-        const pdfPath = path.join(process.cwd(), 'mavuly.pdf');
-        const attachments = fs.existsSync(pdfPath)
-            ? [{ filename: 'Mavuly-Hackathon-Guide.pdf', path: pdfPath, contentType: 'application/pdf' }]
-            : [];
 
         const mailOptions = {
-            from: `"Mavuly Hackathon" <${fromEmail}>`,
+            from: `"The Mavuly Team" <${fromEmail}>`,
             to: email,
-            subject: 'Important Update: Revised Dates for Mavuly Hackathon 2026',
+            subject: "You're invited: Mavuly Hackathon Onboarding, Sunday 7PM",
+            text: `Hi,\n\nRegistration for the Mavuly Hackathon 2026 is now closed. Thank you for signing up.\n\nYour onboarding session holds this Sunday at 7:00 PM (WAT) on Google Meet.\n\nJoin the meeting: https://meet.google.com/yok-ycbd-qys\nAdd it to your calendar: https://calendar.app.google/SykXfWc1tejjLixP7\n\nWe'll walk through the challenge, your timeline, how you'll be judged, and what a winning solution looks like. Come with your questions.\n\nSee you Sunday.\n\nThe Mavuly Team`,
             html: `
                 <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; color: #1f2937; line-height: 1.6;">
-                    <p>Dear ${name || 'Participant'},</p>
-                    <p>Thank you for registering for the <strong>Mavuly Hackathon 2026</strong>.</p>
-                    <p>We would like to inform you of a slight adjustment to the hackathon schedule. Please take note of the revised dates below:</p>
-                    
-                    <ul>
-                        <li><strong>New Registration Deadline:</strong> 27 November 2026</li>
-                        <li><strong>Hackathon Commencement:</strong> 30 November 2026</li>
-                        <li><strong>Hackathon Submission Date:</strong> 6 December 2026</li>
-                    </ul>
-
-                    <p>Please note that your registration remains valid. No further registration is required.</p>
-
-                    <div style="background-color: #f3f4f6; padding: 15px; border-left: 4px solid #25D366; margin: 20px 0;">
-                        <p style="margin-top: 0;">If you haven't joined our official participant WhatsApp community yet, you can join below for live updates:</p>
-                        <a href="${whatsappLink}" style="display: inline-block; background-color: #25D366; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">Join WhatsApp Community</a>
-                    </div>
-
-                    <p>We appreciate your interest in the Mavuly Hackathon and look forward to an exciting experience with you.</p>
-                    <p>Thank you for being part of the Mavuly community.</p>
-                    <p>Best regards,<br/>
-                    <strong>The Mavuly Team</strong><br/>
-                    <a href="https://mavuly.com">https://mavuly.com</a></p>
+                    <p>Hi,</p>
+                    <p>Registration for the Mavuly Hackathon 2026 is now closed. Thank you for signing up.</p>
+                    <p>Your onboarding session holds this Sunday at 7:00 PM (WAT) on Google Meet.</p>
+                    <p>
+                        <strong>Join the meeting:</strong> <a href="https://meet.google.com/yok-ycbd-qys">https://meet.google.com/yok-ycbd-qys</a><br/>
+                        <strong>Add it to your calendar:</strong> <a href="https://calendar.app.google/SykXfWc1tejjLixP7">https://calendar.app.google/SykXfWc1tejjLixP7</a>
+                    </p>
+                    <p>We'll walk through the challenge, your timeline, how you'll be judged, and what a winning solution looks like. Come with your questions.</p>
+                    <p>See you Sunday.</p>
+                    <p>The Mavuly Team</p>
                 </div>
             `,
-            attachments,
         };
 
         try {
             const info = await this.transporter.sendMail(mailOptions);
-            console.log(`✅ BREVO SUCCESS: Hackathon schedule update email sent to ${email} (Message ID: ${info.messageId})`);
+            console.log(`✅ BREVO SUCCESS: Hackathon onboarding email sent to ${email} (Message ID: ${info.messageId})`);
         } catch (error) {
             console.error('❌ BREVO ERROR:', error);
         }

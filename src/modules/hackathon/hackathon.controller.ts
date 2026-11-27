@@ -11,7 +11,7 @@ export class HackathonController {
   constructor(
     private readonly hackathonService: HackathonService,
     private readonly configService: ConfigService,
-  ) {}
+  ) { }
 
   @Post('join')
   async joinHackathon(@Req() req: any) {
@@ -77,7 +77,24 @@ export class HackathonController {
       throw new UnauthorizedException('Invalid team key.');
     }
 
-    return this.hackathonService.broadcastWhatsappEmailToAllParticipants();
+    return this.hackathonService.broadcastOnboardingEmailToAllParticipants();
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 3, ttl: 60000 } })
+  @Post('participants/broadcast-onboarding')
+  async broadcastOnboarding(
+    @Headers('x-team-key') teamKey?: string,
+    @Query('team_key') queryTeamKey?: string,
+  ) {
+    const expectedKey = this.configService.get<string>('HACKATHON_TEAM_KEY') || 'mavuly_rocks_2026';
+    const providedKey = teamKey || queryTeamKey;
+
+    if (!providedKey || providedKey !== expectedKey) {
+      throw new UnauthorizedException('Invalid team key.');
+    }
+
+    return this.hackathonService.broadcastOnboardingEmailToAllParticipants();
   }
 
   @Public()
